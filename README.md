@@ -193,18 +193,22 @@ The system uses an Excel file (`shorts_data.xlsx`) with two sheets:
 
 1. Download the [latest release](https://github.com/Mrshahidali420/youtube-shorts-automation/releases/latest) or clone this repository
 2. Install required packages: `pip install -r requirements.txt`
-3. Configure `config.txt` with your settings
-4. Create a `niche.txt` file with your target niche (e.g., "GTA 6")
-5. Run each component as needed (see 'Running Individual Components' section below)
+3. Create configuration files from templates:
+   - Copy `config.txt.template` to `config.txt` and update with your settings
+   - Copy `niche.txt.template` to `niche.txt` and add your target niche (e.g., "GTA 6")
+   - Copy `channels.txt.template` to `channels.txt` and add your target channels (if using channel-based downloader)
+4. Run each component as needed (see 'Running Individual Components' section below)
 
 ### Option 2: Package Installation
 
 1. Clone this repository
 2. Install the package in development mode: `pip install -e .`
 3. Set up your workspace: `yt-setup` or `python -m youtube_shorts.setup_workspace`
-4. Configure `config.txt` with your settings
-5. Edit `niche.txt` with your target niche (e.g., "GTA 6")
-6. Use the command-line tools:
+4. Create configuration files from templates:
+   - Copy `config.txt.template` to `config.txt` and update with your settings
+   - Copy `niche.txt.template` to `niche.txt` and add your target niche (e.g., "GTA 6")
+   - Copy `channels.txt.template` to `channels.txt` and add your target channels (if using channel-based downloader)
+5. Use the command-line tools:
    ```
    yt-track    # Run performance tracker
    yt-download # Run downloader
@@ -233,7 +237,7 @@ yt-upload   # Run uploader
 
 ### Setting Up Channel-Based Downloads
 
-1. Create a `channels.txt` file in the root directory
+1. Create a `channels.txt` file in the root directory (copy from `channels.txt.template`)
 2. Add one YouTube channel URL per line (e.g., `https://www.youtube.com/@ChannelName`)
 3. Run the channel-based downloader: `python downloader_channel.py`
 
@@ -283,16 +287,19 @@ The channel-based downloader will:
 ### Configuration and Data Files
 - `setup.py`: Package setup script
 - `requirements.txt`: Required dependencies
-- `config.txt`: Configuration settings (created by setup script)
-- `niche.txt`: Target niche for content for keyword-based downloader (created by setup script)
-- `channels.txt`: List of YouTube channel URLs for channel-based downloader
+- `config.txt.template`: Template for configuration settings
+- `config.txt`: Configuration settings (created from template or by setup script)
+- `niche.txt.template`: Template for target niche
+- `niche.txt`: Target niche for content for keyword-based downloader (created from template or by setup script)
+- `channels.txt.template`: Template for channel URLs
+- `channels.txt`: List of YouTube channel URLs for channel-based downloader (created from template)
 - `shorts_data.xlsx`: Excel file tracking downloaded and uploaded videos (created by setup script)
 - `seo_metadata_prompt.txt`: Cache for the potentially improved SEO prompt (created during runtime)
-- `metadata_metrics.json`: Tracks metadata generation metrics (created by setup script)
-- `performance_metrics.json`: Tracks overall performance metrics (created by setup script)
-- `channel_processed_ids_cache.json`: Tracks which videos have been processed from each channel
-- `channel_listing_cache.json`: Stores channel video lists to avoid repeatedly fetching the same content
-- `upload_correlation_cache.json`: Stores links between video indices, discovery keywords, and YouTube Video IDs
+- `metadata_metrics.json`: Tracks metadata generation metrics (created during runtime)
+- `performance_metrics.json`: Tracks overall performance metrics (created during runtime)
+- `channel_processed_ids_cache.json`: Tracks which videos have been processed from each channel (created during runtime)
+- `channel_listing_cache.json`: Stores channel video lists to avoid repeatedly fetching the same content (created during runtime)
+- `upload_correlation_cache.json`: Stores links between video indices, discovery keywords, and YouTube Video IDs (created during runtime)
 
 ### Directories
 - `shorts_downloads/`: Where downloaded videos are stored (created by setup script)
