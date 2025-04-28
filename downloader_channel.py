@@ -2016,12 +2016,16 @@ def get_suggested_category(title: str, description: str):
     ]
     KNOWN_CATEGORIES_LOWER = {cat.lower() for cat in KNOWN_CATEGORIES}
 
+    # Improved prompt that explicitly lists valid categories
     prompt = f"""
     YouTube Shorts Title/Description:
     Title: {title}
     Description: {description[:1000]}
 
-    Suggest ONE most appropriate YouTube Video Category Name (e.g., Gaming, Entertainment). Output ONLY the category name.
+    Based on the content above, select ONE most appropriate YouTube video category from this EXACT list:
+    {', '.join(KNOWN_CATEGORIES)}
+
+    Output ONLY the category name exactly as written in the list above. Do not add any explanation.
     """
 
     try:
