@@ -10,7 +10,7 @@ This suite of scripts automates the entire YouTube Shorts workflow - from findin
 The suite consists of four main scripts:
 
 1. **Performance Tracker** (`performance_tracker.py`): Collects performance metrics from uploaded videos
-2. **Keyword-Based Downloader** (`downloader.py`): Finds and downloads new videos using keywords with SEO optimization and self-improvement
+2. **Keyword-Based Downloader** (`downloader_keyword.py`): Finds and downloads new videos using keywords with SEO optimization and self-improvement
 3. **Channel-Based Downloader** (`downloader_channel.py`): Downloads videos from specific YouTube channels listed in channels.txt
 4. **Uploader** (`uploader.py`): Uploads the videos to YouTube with optimized metadata
 
@@ -194,9 +194,9 @@ The system uses an Excel file (`shorts_data.xlsx`) with two sheets:
 1. Download the [latest release](https://github.com/Mrshahidali420/youtube-shorts-automation/releases/latest) or clone this repository
 2. Install required packages: `pip install -r requirements.txt`
 3. Create configuration files from templates:
-   - Copy `config.txt.template` to `config.txt` and update with your settings
-   - Copy `niche.txt.template` to `niche.txt` and add your target niche (e.g., "GTA 6")
-   - Copy `channels.txt.template` to `channels.txt` and add your target channels (if using channel-based downloader)
+   - Copy `templates/config.txt.template` to `config.txt` and update with your settings
+   - Copy `templates/niche.txt.template` to `niche.txt` and add your target niche (e.g., "GTA 6")
+   - Copy `templates/channels.txt.template` to `channels.txt` and add your target channels (if using channel-based downloader)
 4. Run each component as needed (see 'Running Individual Components' section below)
 
 ### Option 2: Package Installation
@@ -205,13 +205,14 @@ The system uses an Excel file (`shorts_data.xlsx`) with two sheets:
 2. Install the package in development mode: `pip install -e .`
 3. Set up your workspace: `yt-setup` or `python -m youtube_shorts.setup_workspace`
 4. Create configuration files from templates:
-   - Copy `config.txt.template` to `config.txt` and update with your settings
-   - Copy `niche.txt.template` to `niche.txt` and add your target niche (e.g., "GTA 6")
-   - Copy `channels.txt.template` to `channels.txt` and add your target channels (if using channel-based downloader)
+   - Copy `templates/config.txt.template` to `config.txt` and update with your settings
+   - Copy `templates/niche.txt.template` to `niche.txt` and add your target niche (e.g., "GTA 6")
+   - Copy `templates/channels.txt.template` to `channels.txt` and add your target channels (if using channel-based downloader)
 5. Use the command-line tools:
    ```
    yt-track    # Run performance tracker
-   yt-download # Run downloader
+   yt-download # Run keyword-based downloader
+   yt-channel  # Run channel-based downloader
    yt-upload   # Run uploader
    ```
 
@@ -221,7 +222,7 @@ The system uses an Excel file (`shorts_data.xlsx`) with two sheets:
 
 ```
 python performance_tracker.py
-python downloader.py           # Run keyword-based downloader
+python downloader_keyword.py   # Run keyword-based downloader
 python downloader_channel.py   # Run channel-based downloader
 python uploader.py
 ```
@@ -237,7 +238,7 @@ yt-upload   # Run uploader
 
 ### Setting Up Channel-Based Downloads
 
-1. Create a `channels.txt` file in the root directory (copy from `channels.txt.template`)
+1. Create a `channels.txt` file in the root directory (copy from `templates/channels.txt.template`)
 2. Add one YouTube channel URL per line (e.g., `https://www.youtube.com/@ChannelName`)
 3. Run the channel-based downloader: `python downloader_channel.py`
 
@@ -271,27 +272,30 @@ The channel-based downloader will:
 
 ### Main Scripts
 - `performance_tracker.py`: Tracks video performance metrics
-- `downloader.py`: Downloads videos with SEO optimization and self-improvement
+- `downloader_keyword.py`: Downloads videos with SEO optimization and self-improvement using keywords
 - `downloader_channel.py`: Downloads videos from specific YouTube channels
 - `uploader.py`: Uploads videos to YouTube
 - `excel_utils.py`: Utilities for robust Excel file handling
+- `youtube_limits.py`: Constants for YouTube platform limits
 
 ### Package Structure
 - `youtube_shorts/`: Package directory
   - `__init__.py`: Package initialization
   - `performance_tracker.py`: Performance tracking module
-  - `downloader.py`: Video downloading module
+  - `downloader.py`: Video downloading module (keyword-based)
   - `uploader.py`: Video uploading module
   - `excel_utils.py`: Excel utilities module
+  - `setup_workspace.py`: Workspace setup utility
 
 ### Configuration and Data Files
 - `setup.py`: Package setup script
 - `requirements.txt`: Required dependencies
-- `config.txt.template`: Template for configuration settings
+- `templates/`: Directory containing template files
+  - `templates/config.txt.template`: Template for configuration settings
+  - `templates/niche.txt.template`: Template for target niche
+  - `templates/channels.txt.template`: Template for channel URLs
 - `config.txt`: Configuration settings (created from template or by setup script)
-- `niche.txt.template`: Template for target niche
 - `niche.txt`: Target niche for content for keyword-based downloader (created from template or by setup script)
-- `channels.txt.template`: Template for channel URLs
 - `channels.txt`: List of YouTube channel URLs for channel-based downloader (created from template)
 - `shorts_data.xlsx`: Excel file tracking downloaded and uploaded videos (created by setup script)
 - `seo_metadata_prompt.txt`: Cache for the potentially improved SEO prompt (created during runtime)
@@ -304,7 +308,8 @@ The channel-based downloader will:
 ### Directories
 - `shorts_downloads/`: Where downloaded videos are stored (created by setup script)
 - `shorts_metadata/`: Where metadata files are stored (created by setup script)
-- `youtube_shorts/data/`: Contains template files for configuration
+- `templates/`: Contains template files for user configuration
+- `youtube_shorts/data/`: Contains template files for package configuration
 
 ## Releases
 
