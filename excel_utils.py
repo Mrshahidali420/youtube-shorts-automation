@@ -388,87 +388,6 @@ def extract_workbook_data(wb: Any) -> Dict[str, List[List[Any]]]:
     return data
 
 
-# --- Excel Archiving Function ---
-def archive_old_excel_entries(wb: Any, sheet_name: str, date_col_name: str, days_to_keep: int) -> bool:
-    """
-    Moves old entries from a source sheet to an archive sheet.
-
-    Args:
-        wb: The workbook object
-        sheet_name: Name of the source sheet
-        date_col_name: Name of the date column (case-insensitive)
-        days_to_keep: Number of days to keep entries before archiving
-
-    Returns:
-        bool: True if changes were made, False otherwise
-    """
-    if sheet_name not in wb.sheetnames:
-        log_warning(f"Cannot archive: Source sheet '{sheet_name}' not found.")
-        return False
-
-    source_sheet = wb[sheet_name]
-    archive_sheet_name = sheet_name + "_Archive"
-
-    # Ensure archive sheet exists and has headers
-    if archive_sheet_name not in wb.sheetnames:
-        log_info(f"Creating archive sheet: '{archive_sheet_name}'")
-        archive_sheet = wb.create_sheet(archive_sheet_name)
-        # Copy headers from source
-        headers = [cell.value for cell in source_sheet[1]]
-        archive_sheet.append(headers)
-    else:
-        archive_sheet = wb[archive_sheet_name]
-
-    # Find date column index (case-insensitive)
-    date_col_idx = -1
-    headers = [str(cell.value).lower().strip() if cell.value else '' for cell in source_sheet[1]]
-    try:
-        date_col_idx = headers.index(date_col_name.lower().strip()) + 1
-    except ValueError:
-        log_error(f"Cannot archive sheet '{sheet_name}': Date column '{date_col_name}' not found.")
-        return False
-
-    cutoff_date = datetime.now() - timedelta(days=days_to_keep)
-    moved_count = 0
-    rows_to_delete = []
-
-    log_info(f"Archiving entries older than {days_to_keep} days from '{sheet_name}'...")
-    # Iterate backwards to safely delete rows
-    for row_idx in range(source_sheet.max_row, 1, -1):
-        date_cell = source_sheet.cell(row=row_idx, column=date_col_idx)
-        entry_date = None
-        try:
-            if isinstance(date_cell.value, datetime):
-                entry_date = date_cell.value
-            elif isinstance(date_cell.value, float):  # Handle Excel date numbers
-                entry_date = datetime.fromtimestamp(time.mktime(time.gmtime((date_cell.value - 25569) * 86400.0)))
-            elif isinstance(date_cell.value, str) and date_cell.value.strip() and date_cell.value.strip().upper() != "N/A":
-                entry_date = datetime.strptime(date_cell.value.strip(), "%Y-%m-%d %H:%M:%S")
-            # Add more formats if needed
-
-            if entry_date and entry_date < cutoff_date:
-                row_values = [c.value for c in source_sheet[row_idx]]
-                archive_sheet.append(row_values)
-                rows_to_delete.append(row_idx)
-                moved_count += 1
-
-        except (ValueError, TypeError) as parse_err:
-            log_warning(f"Skipping row {row_idx} in '{sheet_name}' due to date parse error: {parse_err} (Value: '{date_cell.value}')")
-        except Exception as e:
-            log_error(f"Unexpected error processing row {row_idx} in '{sheet_name}': {e}")
-
-    # Delete rows from source sheet after iteration
-    if rows_to_delete:
-        log_info(f"Deleting {len(rows_to_delete)} archived rows from '{sheet_name}'...")
-        # Sort indices descending to delete from bottom up
-        for row_idx in sorted(rows_to_delete, reverse=True):
-            source_sheet.delete_rows(row_idx)
-        log_success(f"Archived {moved_count} entries from '{sheet_name}'.")
-        return True  # Indicate changes were made
-    else:
-        log_info(f"No entries old enough to archive found in '{sheet_name}'.")
-        return False
-
 # --- High-Level Functions ---
 def load_or_create_excel(file_path: str, sheets_config: Dict[str, List[str]]) -> Tuple[Optional[Any], Dict[str, Any], bool]:
     """
@@ -582,24 +501,162 @@ def get_last_video_index(sheet: Any, index_column: int = 1, prefix: str = "video
     return max_index + 1
 
 
+def find_column_index(sheet: Any, column_name: str, case_sensitive: bool = False) -> Optional[int]:
+    """
+    Find the index of a column by name in the header row.
+
+    Args:
+        sheet: The worksheet to search
+        column_name: The name of the column to find
+        case_sensitive: Whether to perform case-sensitive matching
+
+    Returns:
+        int: The 1-based column index, or None if not found
+    """
+    if sheet.max_row == 0:
+        return None
+
+    search_name = column_name if case_sensitive else column_name.lower()
+
+    for cell in sheet[1]:
+        cell_value = str(cell.value) if cell.value is not None else ""
+        compare_value = cell_value if case_sensitive else cell_value.lower()
+
+        if compare_value == search_name:
+            return cell.column
+
+    return None
+
+
+def archive_old_excel_entries(wb: Any, sheet_name: str, date_col_name: str, days_to_keep: int) -> bool:
+    """
+    Moves old entries from a source sheet to an archive sheet.
+
+    Args:
+        wb: The workbook object
+        sheet_name: Name of the source sheet
+        date_col_name: Name of the column containing dates
+        days_to_keep: Number of days to keep entries before archiving
+
+    Returns:
+        bool: True if any entries were archived, False otherwise
+    """
+    if not OPENPYXL_AVAILABLE:
+        log_error("Cannot archive entries: openpyxl not available")
+        return False
+
+    if sheet_name not in wb.sheetnames:
+        log_warning(f"Cannot archive: Source sheet '{sheet_name}' not found.")
+        return False
+
+    source_sheet = wb[sheet_name]
+    archive_sheet_name = f"{sheet_name}_Archive"
+
+    # Ensure archive sheet exists and has headers
+    if archive_sheet_name not in wb.sheetnames:
+        log_info(f"Creating archive sheet: '{archive_sheet_name}'")
+        archive_sheet = wb.create_sheet(archive_sheet_name)
+        # Copy headers from source
+        headers = [cell.value for cell in source_sheet[1]]
+        archive_sheet.append(headers)
+    else:
+        archive_sheet = wb[archive_sheet_name]
+
+    # Find date column index (case-insensitive)
+    date_col_idx = find_column_index(source_sheet, date_col_name, case_sensitive=False)
+    if not date_col_idx:
+        log_error(f"Cannot archive sheet '{sheet_name}': Date column '{date_col_name}' not found.")
+        return False
+
+    cutoff_date = datetime.now() - timedelta(days=days_to_keep)
+    moved_count = 0
+    rows_to_delete = []
+
+    log_info(f"Archiving entries older than {days_to_keep} days from '{sheet_name}'...")
+
+    # Iterate backwards to safely delete rows
+    for row_idx in range(source_sheet.max_row, 1, -1):  # Skip header row
+        date_cell = source_sheet.cell(row=row_idx, column=date_col_idx)
+        entry_date = None
+
+        try:
+            if isinstance(date_cell.value, datetime):
+                entry_date = date_cell.value
+            elif isinstance(date_cell.value, float):  # Handle Excel date numbers
+                entry_date = datetime.fromtimestamp(time.mktime(time.gmtime((date_cell.value - 25569) * 86400.0)))
+            elif isinstance(date_cell.value, str) and date_cell.value.strip() and date_cell.value.strip().upper() != "N/A":
+                # Try common date formats
+                try:
+                    entry_date = datetime.strptime(date_cell.value.strip(), "%Y-%m-%d %H:%M:%S")
+                except ValueError:
+                    try:
+                        entry_date = datetime.strptime(date_cell.value.strip(), "%Y-%m-%d")
+                    except ValueError:
+                        try:
+                            entry_date = datetime.strptime(date_cell.value.strip(), "%m/%d/%Y %H:%M:%S")
+                        except ValueError:
+                            try:
+                                entry_date = datetime.strptime(date_cell.value.strip(), "%m/%d/%Y")
+                            except ValueError:
+                                log_warning(f"Could not parse date '{date_cell.value}' in row {row_idx}. Skipping.")
+                                continue
+
+            if entry_date and entry_date < cutoff_date:
+                # Copy row to archive sheet
+                row_values = [cell.value for cell in source_sheet[row_idx]]
+                archive_sheet.append(row_values)
+                rows_to_delete.append(row_idx)
+                moved_count += 1
+
+        except (ValueError, TypeError) as parse_err:
+            log_warning(f"Skipping row {row_idx} in '{sheet_name}' due to date parse error: {parse_err} (Value: '{date_cell.value}')")
+        except Exception as e:
+            log_error(f"Unexpected error processing row {row_idx} in '{sheet_name}': {e}")
+
+    # Delete rows from source sheet after iteration
+    if rows_to_delete:
+        log_info(f"Deleting {len(rows_to_delete)} archived rows from '{sheet_name}'...")
+        # Sort indices descending to delete from bottom up
+        for row_idx in sorted(rows_to_delete, reverse=True):
+            source_sheet.delete_rows(row_idx)
+        log_success(f"Archived {moved_count} entries from '{sheet_name}'.")
+        return True  # Indicate changes were made
+    else:
+        log_info(f"No entries old enough to archive found in '{sheet_name}'.")
+        return False
+
+
 # --- Main Function for Testing ---
 def test_excel_utils():
     """Test the Excel utilities module."""
     test_file = "test_excel.xlsx"
     sheets_config = {
-        "Sheet1": ["ID", "Name", "Value"],
-        "Sheet2": ["ID", "Description", "Status"]
+        "Sheet1": ["ID", "Name", "Value", "Date"],
+        "Sheet2": ["ID", "Description", "Status", "Date"]
     }
 
     # Test loading or creating Excel
     wb, sheets, save_needed = load_or_create_excel(test_file, sheets_config)
     if wb:
-        # Test appending rows
+        # Test appending rows with dates
+        current_date = datetime.now()
+        old_date = current_date - timedelta(days=10)
+        very_old_date = current_date - timedelta(days=200)
+
         rows = [
-            ["ID1", "Test Name 1", 100],
-            ["ID2", "Test Name 2", 200]
+            ["ID1", "Test Name 1", 100, current_date],
+            ["ID2", "Test Name 2", 200, old_date],
+            ["ID3", "Test Name 3", 300, very_old_date]
         ]
         append_rows_to_sheet(sheets["Sheet1"], rows)
+
+        # Test archiving
+        log_info("Testing archiving functionality...")
+        archive_result = archive_old_excel_entries(wb, "Sheet1", "Date", 30)
+        if archive_result:
+            log_success("Archiving test successful")
+        else:
+            log_warning("No entries were archived (this is normal if running test multiple times)")
 
         # Test saving
         if save_workbook_with_fallback(wb, test_file, extract_workbook_data):

@@ -11,7 +11,6 @@ import random
 import math
 import time
 import traceback
-import collections # For metadata validation
 import colorama # Import colorama
 from colorama import Fore, Style, Back # Import specific styles
 import shutil # For file backups
@@ -30,19 +29,11 @@ def print_fatal(msg, indent=0): prefix = "  " * indent; print(f"{prefix}{Back.RE
 
 # --- Constants ---
 # These constants will be overridden by config.txt values if available
-# Default values
-_DEFAULT_YT_SEARCH_RESULTS = 50  # Number of search results to fetch per keyword
-_DEFAULT_VIDEOS_PER_KEYWORD = 5  # Max videos to download for a single keyword
-_DEFAULT_KEYWORDS_PER_RUN = 5    # Number of keywords to select for each run
-_DEFAULT_MIN_KEYWORDS = 20       # Minimum number of keywords before generating new ones
-_DEFAULT_NEW_KEYWORDS = 10       # Number of new keywords to generate when needed
-
-# Variables that will be set from config.txt or defaults
-YT_SEARCH_RESULTS_PER_KEYWORD = _DEFAULT_YT_SEARCH_RESULTS
-VIDEOS_TO_DOWNLOAD_PER_KEYWORD = _DEFAULT_VIDEOS_PER_KEYWORD
-KEYWORDS_TO_PROCESS_PER_RUN = _DEFAULT_KEYWORDS_PER_RUN
-MIN_KEYWORDS_THRESHOLD = _DEFAULT_MIN_KEYWORDS
-NEW_KEYWORDS_TO_GENERATE = _DEFAULT_NEW_KEYWORDS
+YT_SEARCH_RESULTS_PER_KEYWORD = 50 # Number of search results to fetch per keyword
+VIDEOS_TO_DOWNLOAD_PER_KEYWORD = 5  # Max videos to download for a single keyword
+KEYWORDS_TO_PROCESS_PER_RUN = 5  # Number of keywords to select for each run
+MIN_KEYWORDS_THRESHOLD = 20      # Minimum number of keywords before generating new ones
+NEW_KEYWORDS_TO_GENERATE = 10    # Number of new keywords to generate when needed
 
 # Constants that don't change with config
 MAX_TITLE_LENGTH = 100             # YouTube's recommended max title length
@@ -67,6 +58,7 @@ SEO_METADATA_PROMPT_CACHE = "seo_metadata_prompt.txt" # Optional: Cache the pote
 METADATA_METRICS_FILENAME = "metadata_metrics.json" # File to track metadata generation metrics
 PERFORMANCE_METRICS_FILENAME = "performance_metrics.json" # File to track overall performance metrics
 TUNING_SUGGESTIONS_FILENAME = "tuning_suggestions.log" # File to store parameter tuning suggestions
+RUN_SUMMARY_FILENAME = "run_summaries.log" # File to store detailed run summaries
 
 # --- Correlation Cache Constants ---
 UPLOAD_CORRELATION_CACHE_FILENAME = "upload_correlation_cache.json" # For tracking correlation between video index, discovery keyword, and YouTube Video ID
@@ -187,6 +179,68 @@ def generate_keywords_from_niche(seed_niche, num_keywords=10, top_performing_key
     except Exception as e:
         print_error(f"Error generating keywords from niche '{seed_niche}': {e}", 1, include_traceback=True)
         return []
+
+# --- Metadata Validation ---
+def validate_generated_metadata(metadata, video_title):
+    """Performs cross-validation checks on generated metadata."""
+    warnings = []
+    title = metadata.get("title", "")
+    description = metadata.get("description", "")
+    tags = metadata.get("tags", [])
+
+    if not title: warnings.append("Generated title is empty.")
+    if not description: warnings.append("Generated description is empty.")
+    if not tags: warnings.append("Generated tags list is empty.")
+
+    # 1. Title in Description (basic check)
+    # Remove #Shorts for check, compare lowercase
+    title_base = title.replace("#Shorts", "").strip().lower()
+    if title_base and title_base not in description.lower():
+        warnings.append(f"Generated title base ('{title_base[:50]}...') not found in description.")
+
+    # 2. Tags mentioned in Description
+    tags_in_desc_heading = "Tags Used in Video :-"
+    if tags_in_desc_heading.lower() in description.lower():
+        try:
+            # Find text after heading, split by comma/newline, strip whitespace
+            desc_parts = description.lower().split(tags_in_desc_heading.lower(), 1)
+            if len(desc_parts) > 1:
+                # Take text after heading, stop at next potential heading or end
+                tags_text_area = desc_parts[1].split("\n\n")[0].split("ignored hashtags :-")[0]
+                tags_mentioned_in_desc = {tag.strip() for tag in re.split(r'[,\n]', tags_text_area) if tag.strip()}
+                tags_generated_lower = {tag.lower() for tag in tags}
+
+                missing_in_desc = tags_generated_lower - tags_mentioned_in_desc
+                extra_in_desc = tags_mentioned_in_desc - tags_generated_lower
+
+                if missing_in_desc: warnings.append(f"Tags listed in <tags> but missing under description heading: {missing_in_desc}")
+                if extra_in_desc: warnings.append(f"Tags mentioned under description heading but not in <tags>: {extra_in_desc}")
+        except Exception as e:
+            warnings.append(f"Error parsing tags from description: {e}")
+    else:
+        warnings.append(f"'{tags_in_desc_heading}' heading not found in description.")
+
+    # 3. Keyword Stuffing (Simple Heuristic)
+    words_in_desc = description.lower().split()
+    if tags and words_in_desc:
+        max_tag_word_occurrences = 5 # Configurable threshold
+        for tag in tags:
+            tag_words = tag.lower().split()
+            for tag_word in tag_words:
+                if len(tag_word) > 3: # Only check meaningful words
+                    count = words_in_desc.count(tag_word)
+                    if count > max_tag_word_occurrences:
+                        warnings.append(f"Potential keyword stuffing: Word '{tag_word}' (from tag '{tag}') appears {count} times in description.")
+                        break # Only report once per tag
+
+    if warnings:
+        print_warning(f"Metadata validation warnings for '{video_title}':", 3)
+        for warn in warnings:
+            print_warning(f"  - {warn}", 4)
+        # Optionally add warnings to metadata object?
+        # metadata['validation_warnings'] = warnings
+    else:
+        print_success(f"Metadata validation passed for '{video_title}'.", 3)
 
 # --- Metadata Prompt Improvement (Adjusted for SEO context) ---
 def improve_metadata_prompt(error_metrics):
@@ -458,54 +512,6 @@ def generate_seo_metadata(video_topic, uploader_name="Unknown Uploader", origina
 
         metadata["title"] = temp_title
 
-        # --- Cross-Validation Checks ---
-        validation_warnings = []
-        # Check 1: Title in Description (simplified check)
-        try:
-            title_check = metadata.get("title", "").replace(SHORTS_SUFFIX, "").strip().lower()
-            desc_check = metadata.get("description", "").lower()
-            if title_check and title_check not in desc_check:
-                # Allow for minor variations, check first ~20 chars maybe?
-                if title_check[:20] not in desc_check[:max(200, len(title_check)+50)]:  # Check beginning of desc
-                    validation_warnings.append("Title not found near start of description.")
-        except Exception as e:
-            validation_warnings.append(f"Title check failed: {e}")
-
-        # Check 2: Tags listed in Description
-        try:
-            tags_heading = "Tags Used in Video :-".lower()
-            desc_check = metadata.get("description", "").lower()
-            tags_list = metadata.get("tags", [])
-            heading_index = desc_check.find(tags_heading)
-            if tags_list and heading_index == -1:
-                validation_warnings.append("Tags list heading missing in description.")
-            elif tags_list and heading_index != -1:
-                desc_after_heading = desc_check[heading_index:]
-                # Check if at least one of the first 5 tags is listed
-                if not any(tag.lower() in desc_after_heading for tag in tags_list[:5]):
-                    validation_warnings.append("First few tags not found listed in description after heading.")
-        except Exception as e:
-            validation_warnings.append(f"Tag list check failed: {e}")
-
-        # Check 3: Basic Keyword Stuffing
-        try:
-            text_to_check = metadata.get("description", "") + " " + " ".join(metadata.get("tags", []))
-            words = re.findall(r'\b\w{4,}\b', text_to_check.lower())  # Words 4+ chars
-            if len(words) > 20:  # Only check if there's enough text
-                word_counts = collections.Counter(words)
-                most_common = word_counts.most_common(3)
-                # Check if top words appear excessively (e.g., > 15 times)
-                if most_common and most_common[0][1] > 15:
-                    validation_warnings.append(f"Potential keyword stuffing detected for word: '{most_common[0][0]}' ({most_common[0][1]} times).")
-        except Exception as e:
-            validation_warnings.append(f"Stuffing check failed: {e}")
-
-        if validation_warnings:
-            print_warning(f"Metadata validation warnings for '{video_topic}':", 1)
-            for warn in validation_warnings:
-                print_warning(f"- {warn}", 2)
-        # --- End Cross-Validation Checks ---
-
         # Add top 5 tags as hashtags to the description if not already present
         # (The SEO prompt asks for hashtags at the end, but this ensures some are there if the prompt fails)
         tags_list = metadata.get("tags", [])
@@ -606,6 +612,11 @@ def generate_metadata_with_timeout(video_title, uploader_name, original_title="U
             if error_type and error_details:
                 add_error_sample(metadata_metrics, error_type, error_details, video_title)
 
+            # --->>> ADD VALIDATION CALL HERE <<<---
+            if result_metadata: # Only validate if we have metadata
+                validate_generated_metadata(result_metadata, video_title)
+            # --->>> END VALIDATION CALL <<<---
+
             save_metadata_metrics(metadata_metrics) # Save after checking result
             return result_metadata # Return the metadata dict (potentially with suggested_category)
 
@@ -613,7 +624,6 @@ def generate_metadata_with_timeout(video_title, uploader_name, original_title="U
         print_warning(f"Primary metadata generation timed out [SEO] for: {video_title}", 1)
         metadata_metrics["timeouts"] += 1
         add_error_sample(metadata_metrics, "timeout", f"Metadata generation timed out for: {video_title}", video_title)
-        save_metadata_metrics(metadata_metrics)
 
         # Fallback metadata consistent with SEO Style (NO suggested category here)
         fallback_title = video_title
@@ -623,17 +633,24 @@ def generate_metadata_with_timeout(video_title, uploader_name, original_title="U
              fallback_title = truncated[:last_space].strip() if last_space > 0 else truncated.strip()
         if not fallback_title.endswith(SHORTS_SUFFIX) and len(fallback_title) + len(SHORTS_SUFFIX) <= MAX_TITLE_LENGTH:
              fallback_title += SHORTS_SUFFIX
-        return {
+
+        fallback_metadata = {
             "title": fallback_title,
             "description": f"Default SEO description for {video_title}. Generation timed out.\n\nCredit to: {uploader_name}\nOriginal Title: {original_title}",
             "tags": ["gta", "shorts", "gaming", "timeout", video_title.lower().replace(" ", "")]
             # No 'suggested_category' in timeout fallback
         }
+
+        # --->>> ADD VALIDATION CALL HERE <<<---
+        validate_generated_metadata(fallback_metadata, video_title)
+        # --->>> END VALIDATION CALL <<<---
+
+        save_metadata_metrics(metadata_metrics)
+        return fallback_metadata
     except Exception as e:
         print_error(f"Error submitting primary metadata generation job [SEO] for '{video_title}': {e}", 1, include_traceback=True)
         metadata_metrics["parse_failures"] += 1 # Use parse_failures for general exceptions during generation
         add_error_sample(metadata_metrics, "exception", f"Error: {str(e)} for: {video_title}", video_title)
-        save_metadata_metrics(metadata_metrics)
 
         # Fallback metadata consistent with SEO Style (NO suggested category here)
         fallback_title = video_title
@@ -643,12 +660,20 @@ def generate_metadata_with_timeout(video_title, uploader_name, original_title="U
              fallback_title = truncated[:last_space].strip() if last_space > 0 else truncated.strip()
         if not fallback_title.endswith(SHORTS_SUFFIX) and len(fallback_title) + len(SHORTS_SUFFIX) <= MAX_TITLE_LENGTH:
              fallback_title += SHORTS_SUFFIX
-        return {
+
+        fallback_metadata = {
             "title": fallback_title,
             "description": f"Default SEO description for {video_title}. Error during task submission: {e}\n\nCredit to: {uploader_name}\nOriginal Title: {original_title}",
             "tags": ["gta", "shorts", "gaming", "error", "submission"]
             # No 'suggested_category' in exception fallback
         }
+
+        # --->>> ADD VALIDATION CALL HERE <<<---
+        validate_generated_metadata(fallback_metadata, video_title)
+        # --->>> END VALIDATION CALL <<<---
+
+        save_metadata_metrics(metadata_metrics)
+        return fallback_metadata
 
 # --- Keyword Generation (Kept from downloader - B.py - includes top performers) ---
 def generate_keywords_from_niche(seed_niche, num_keywords=10, top_performing_keywords=None):
@@ -872,6 +897,117 @@ def generate_performance_summary(metrics):
         for kw in top_keywords: summary.append(f" - {kw}: {keyword_performance.get(kw, 0):.2f}") # Format score
     return "\n".join(summary)
 
+
+def generate_detailed_run_summary(run_metrics, performance_metrics, config):
+    """Generates a detailed summary of the current run with insights and statistics."""
+    if not run_metrics:
+        print_warning("No run metrics available for summary generation.")
+        return None
+
+    try:
+        # Format timestamp
+        run_date = datetime.fromisoformat(run_metrics.get("date", datetime.now().isoformat()))
+        formatted_date = run_date.strftime("%Y-%m-%d %H:%M:%S")
+
+        # Calculate success rates
+        downloads_attempted = run_metrics.get("downloads_attempted", 0)
+        downloads_successful = run_metrics.get("downloads_successful", 0)
+        download_success_rate = downloads_successful / max(1, downloads_attempted) * 100
+
+        metadata_api_calls = run_metrics.get("metadata_api_calls", 0)
+        metadata_errors = run_metrics.get("metadata_errors", 0)
+        metadata_success_rate = (metadata_api_calls - metadata_errors) / max(1, metadata_api_calls) * 100
+
+        shorts_found = run_metrics.get("shorts_found", 0)
+        suitable_shorts = run_metrics.get("suitable_shorts", 0)
+        shorts_suitability_rate = suitable_shorts / max(1, shorts_found) * 100
+
+        # Get current config values
+        current_config = {
+            "YT_SEARCH_RESULTS_PER_KEYWORD": int(config.get("YT_SEARCH_RESULTS_PER_KEYWORD", YT_SEARCH_RESULTS_PER_KEYWORD)),
+            "VIDEOS_TO_DOWNLOAD_PER_KEYWORD": int(config.get("VIDEOS_TO_DOWNLOAD_PER_KEYWORD", VIDEOS_TO_DOWNLOAD_PER_KEYWORD)),
+            "KEYWORDS_TO_PROCESS_PER_RUN": int(config.get("KEYWORDS_TO_PROCESS_PER_RUN", KEYWORDS_TO_PROCESS_PER_RUN)),
+            "MAX_DOWNLOADS": int(config.get("MAX_DOWNLOADS", 0)),
+        }
+
+        # Build summary
+        summary = [
+            f"=== DETAILED RUN SUMMARY: {formatted_date} ===",
+            "",
+            "--- Configuration ---",
+            f"Search Results Per Keyword: {current_config['YT_SEARCH_RESULTS_PER_KEYWORD']}",
+            f"Videos to Download Per Keyword: {current_config['VIDEOS_TO_DOWNLOAD_PER_KEYWORD']}",
+            f"Keywords to Process Per Run: {current_config['KEYWORDS_TO_PROCESS_PER_RUN']}",
+            f"Max Downloads: {current_config['MAX_DOWNLOADS']}",
+            "",
+            "--- Performance Metrics ---",
+            f"Downloads Attempted: {downloads_attempted}",
+            f"Downloads Successful: {downloads_successful}",
+            f"Download Success Rate: {download_success_rate:.1f}%",
+            f"Shorts Found: {shorts_found}",
+            f"Suitable Shorts: {suitable_shorts}",
+            f"Shorts Suitability Rate: {shorts_suitability_rate:.1f}%",
+            f"Metadata API Calls: {metadata_api_calls}",
+            f"Metadata Errors: {metadata_errors}",
+            f"Metadata Success Rate: {metadata_success_rate:.1f}%",
+            "",
+            "--- Keywords Used ---"
+        ]
+
+        # Add keywords used
+        keywords_used = run_metrics.get("keywords_used", [])
+        if keywords_used:
+            for keyword in keywords_used:
+                summary.append(f"- {keyword}")
+        else:
+            summary.append("No keywords were used in this run.")
+
+        # Add historical context
+        summary.extend([
+            "",
+            "--- Historical Context ---"
+        ])
+
+        # Calculate averages from previous runs
+        previous_runs = performance_metrics.get("runs", [])[:-1]  # Exclude current run
+        if previous_runs:
+            avg_downloads_successful = sum(run.get("downloads_successful", 0) for run in previous_runs) / len(previous_runs)
+            avg_metadata_success_rate = sum((run.get("metadata_api_calls", 0) - run.get("metadata_errors", 0)) / max(1, run.get("metadata_api_calls", 0)) * 100 for run in previous_runs) / len(previous_runs)
+            avg_shorts_suitability_rate = sum(run.get("suitable_shorts", 0) / max(1, run.get("shorts_found", 0)) * 100 for run in previous_runs) / len(previous_runs)
+
+            summary.extend([
+                f"Average Downloads Per Run: {avg_downloads_successful:.1f}",
+                f"Average Metadata Success Rate: {avg_metadata_success_rate:.1f}%",
+                f"Average Shorts Suitability Rate: {avg_shorts_suitability_rate:.1f}%",
+                "",
+                "--- Comparison to Average ---",
+                f"Downloads: {'Above average' if downloads_successful > avg_downloads_successful else 'Below average'} ({downloads_successful} vs {avg_downloads_successful:.1f})",
+                f"Metadata Success: {'Above average' if metadata_success_rate > avg_metadata_success_rate else 'Below average'} ({metadata_success_rate:.1f}% vs {avg_metadata_success_rate:.1f}%)",
+                f"Shorts Suitability: {'Above average' if shorts_suitability_rate > avg_shorts_suitability_rate else 'Below average'} ({shorts_suitability_rate:.1f}% vs {avg_shorts_suitability_rate:.1f}%)"
+            ])
+        else:
+            summary.append("No previous runs available for comparison.")
+
+        # Add timestamp
+        summary.extend([
+            "",
+            f"=== END OF SUMMARY: {formatted_date} ==="
+        ])
+
+        # Join and save summary
+        summary_text = "\n".join(summary)
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        summary_path = os.path.join(script_dir, RUN_SUMMARY_FILENAME)
+
+        with open(summary_path, "a", encoding="utf-8") as f:
+            f.write("\n\n" + summary_text)
+
+        return summary_text
+
+    except Exception as e:
+        print_error(f"Error generating detailed run summary: {e}", include_traceback=True)
+        return None
+
 def generate_tuning_suggestions(metrics, config):
     """Generates parameter tuning suggestions using Gemini."""
     performance_summary = generate_performance_summary(metrics)
@@ -1077,29 +1213,29 @@ if __name__ == "__main__":
         # Load keyword-based downloader settings from config
 
         # YT_SEARCH_RESULTS_PER_KEYWORD (Optional with Default)
-        try: YT_SEARCH_RESULTS_PER_KEYWORD = int(config.get("YT_SEARCH_RESULTS_PER_KEYWORD", _DEFAULT_YT_SEARCH_RESULTS))
-        except (ValueError, TypeError): print_warning(f"Invalid YT_SEARCH_RESULTS_PER_KEYWORD. Using default: {_DEFAULT_YT_SEARCH_RESULTS}")
-        if YT_SEARCH_RESULTS_PER_KEYWORD <= 0: YT_SEARCH_RESULTS_PER_KEYWORD = _DEFAULT_YT_SEARCH_RESULTS; print_warning(f"YT_SEARCH_RESULTS_PER_KEYWORD must be positive. Using default: {_DEFAULT_YT_SEARCH_RESULTS}")
+        try: YT_SEARCH_RESULTS_PER_KEYWORD = int(config.get("YT_SEARCH_RESULTS_PER_KEYWORD", YT_SEARCH_RESULTS_PER_KEYWORD))
+        except (ValueError, TypeError): print_warning(f"Invalid YT_SEARCH_RESULTS_PER_KEYWORD. Using default: {YT_SEARCH_RESULTS_PER_KEYWORD}")
+        if YT_SEARCH_RESULTS_PER_KEYWORD <= 0: YT_SEARCH_RESULTS_PER_KEYWORD = 50; print_warning(f"YT_SEARCH_RESULTS_PER_KEYWORD must be positive. Using default: 50")
 
         # VIDEOS_TO_DOWNLOAD_PER_KEYWORD (Optional with Default)
-        try: VIDEOS_TO_DOWNLOAD_PER_KEYWORD = int(config.get("VIDEOS_TO_DOWNLOAD_PER_KEYWORD", _DEFAULT_VIDEOS_PER_KEYWORD))
-        except (ValueError, TypeError): print_warning(f"Invalid VIDEOS_TO_DOWNLOAD_PER_KEYWORD. Using default: {_DEFAULT_VIDEOS_PER_KEYWORD}")
-        if VIDEOS_TO_DOWNLOAD_PER_KEYWORD <= 0: VIDEOS_TO_DOWNLOAD_PER_KEYWORD = _DEFAULT_VIDEOS_PER_KEYWORD; print_warning(f"VIDEOS_TO_DOWNLOAD_PER_KEYWORD must be positive. Using default: {_DEFAULT_VIDEOS_PER_KEYWORD}")
+        try: VIDEOS_TO_DOWNLOAD_PER_KEYWORD = int(config.get("VIDEOS_TO_DOWNLOAD_PER_KEYWORD", VIDEOS_TO_DOWNLOAD_PER_KEYWORD))
+        except (ValueError, TypeError): print_warning(f"Invalid VIDEOS_TO_DOWNLOAD_PER_KEYWORD. Using default: {VIDEOS_TO_DOWNLOAD_PER_KEYWORD}")
+        if VIDEOS_TO_DOWNLOAD_PER_KEYWORD <= 0: VIDEOS_TO_DOWNLOAD_PER_KEYWORD = 5; print_warning(f"VIDEOS_TO_DOWNLOAD_PER_KEYWORD must be positive. Using default: 5")
 
         # KEYWORDS_TO_PROCESS_PER_RUN (Optional with Default)
-        try: KEYWORDS_TO_PROCESS_PER_RUN = int(config.get("KEYWORDS_TO_PROCESS_PER_RUN", _DEFAULT_KEYWORDS_PER_RUN))
-        except (ValueError, TypeError): print_warning(f"Invalid KEYWORDS_TO_PROCESS_PER_RUN. Using default: {_DEFAULT_KEYWORDS_PER_RUN}")
-        if KEYWORDS_TO_PROCESS_PER_RUN <= 0: KEYWORDS_TO_PROCESS_PER_RUN = _DEFAULT_KEYWORDS_PER_RUN; print_warning(f"KEYWORDS_TO_PROCESS_PER_RUN must be positive. Using default: {_DEFAULT_KEYWORDS_PER_RUN}")
+        try: KEYWORDS_TO_PROCESS_PER_RUN = int(config.get("KEYWORDS_TO_PROCESS_PER_RUN", KEYWORDS_TO_PROCESS_PER_RUN))
+        except (ValueError, TypeError): print_warning(f"Invalid KEYWORDS_TO_PROCESS_PER_RUN. Using default: {KEYWORDS_TO_PROCESS_PER_RUN}")
+        if KEYWORDS_TO_PROCESS_PER_RUN <= 0: KEYWORDS_TO_PROCESS_PER_RUN = 5; print_warning(f"KEYWORDS_TO_PROCESS_PER_RUN must be positive. Using default: 5")
 
         # MIN_KEYWORDS_THRESHOLD (Optional with Default)
-        try: MIN_KEYWORDS_THRESHOLD = int(config.get("MIN_KEYWORDS_THRESHOLD", _DEFAULT_MIN_KEYWORDS))
-        except (ValueError, TypeError): print_warning(f"Invalid MIN_KEYWORDS_THRESHOLD. Using default: {_DEFAULT_MIN_KEYWORDS}")
-        if MIN_KEYWORDS_THRESHOLD <= 0: MIN_KEYWORDS_THRESHOLD = _DEFAULT_MIN_KEYWORDS; print_warning(f"MIN_KEYWORDS_THRESHOLD must be positive. Using default: {_DEFAULT_MIN_KEYWORDS}")
+        try: MIN_KEYWORDS_THRESHOLD = int(config.get("MIN_KEYWORDS_THRESHOLD", MIN_KEYWORDS_THRESHOLD))
+        except (ValueError, TypeError): print_warning(f"Invalid MIN_KEYWORDS_THRESHOLD. Using default: {MIN_KEYWORDS_THRESHOLD}")
+        if MIN_KEYWORDS_THRESHOLD <= 0: MIN_KEYWORDS_THRESHOLD = 20; print_warning(f"MIN_KEYWORDS_THRESHOLD must be positive. Using default: 20")
 
         # NEW_KEYWORDS_TO_GENERATE (Optional with Default)
-        try: NEW_KEYWORDS_TO_GENERATE = int(config.get("NEW_KEYWORDS_TO_GENERATE", _DEFAULT_NEW_KEYWORDS))
-        except (ValueError, TypeError): print_warning(f"Invalid NEW_KEYWORDS_TO_GENERATE. Using default: {_DEFAULT_NEW_KEYWORDS}")
-        if NEW_KEYWORDS_TO_GENERATE <= 0: NEW_KEYWORDS_TO_GENERATE = _DEFAULT_NEW_KEYWORDS; print_warning(f"NEW_KEYWORDS_TO_GENERATE must be positive. Using default: {_DEFAULT_NEW_KEYWORDS}")
+        try: NEW_KEYWORDS_TO_GENERATE = int(config.get("NEW_KEYWORDS_TO_GENERATE", NEW_KEYWORDS_TO_GENERATE))
+        except (ValueError, TypeError): print_warning(f"Invalid NEW_KEYWORDS_TO_GENERATE. Using default: {NEW_KEYWORDS_TO_GENERATE}")
+        if NEW_KEYWORDS_TO_GENERATE <= 0: NEW_KEYWORDS_TO_GENERATE = 10; print_warning(f"NEW_KEYWORDS_TO_GENERATE must be positive. Using default: 10")
 
         print(f"{Fore.BLUE}{Style.BRIGHT}Settings: Max Downloads={max_downloads}, Max Keywords={max_keywords}{Style.RESET_ALL}")
         print(f"{Fore.BLUE}Keyword Settings: Search Results={YT_SEARCH_RESULTS_PER_KEYWORD}, Keywords Per Run={KEYWORDS_TO_PROCESS_PER_RUN}, Videos Per Keyword={VIDEOS_TO_DOWNLOAD_PER_KEYWORD}{Style.RESET_ALL}")
@@ -1620,6 +1756,15 @@ if __name__ == "__main__":
             performance_metrics.setdefault("runs", []).append(run_metrics)
             if len(performance_metrics["runs"]) > 20: performance_metrics["runs"] = performance_metrics["runs"][-20:] # Keep last 20 runs
             save_performance_metrics(performance_metrics) # Save overall metrics
+
+            # Generate detailed run summary
+            print_info("Generating detailed run summary...")
+            run_summary = generate_detailed_run_summary(run_metrics, performance_metrics, config)
+            if run_summary:
+                print_success(f"Run summary generated and saved to {RUN_SUMMARY_FILENAME}")
+                print_info(f"Summary preview:\n{run_summary[:400]}...", 1)
+            else:
+                print_warning("Could not generate detailed run summary.", 1)
 
             # Parameter Tuning Check
             if len(performance_metrics["runs"]) >= MIN_RUNS_BEFORE_TUNING:
