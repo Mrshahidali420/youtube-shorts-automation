@@ -1089,6 +1089,72 @@ def upload_video(
 
         # --- End Category Selection ---
 
+        # ==================================================================
+        # --- NEW: Wait for Upload Completion (before first 'Next') ---
+        # ==================================================================
+        print_info("Waiting for video file upload to complete (checking for Checks badge)...", indent=2)
+        upload_complete = False
+        max_wait_upload_seconds = 1800  # 30 minutes max wait for upload
+        upload_wait_start_time = time.time()
+        # Use the CSS selector for the checks badge as the primary indicator
+        checks_badge_selector = "#checks-badge"
+        # XPath for the progress label to optionally report progress
+        progress_label_xpath = "//span[contains(@class, 'progress-label')]"
+
+        while time.time() - upload_wait_start_time < max_wait_upload_seconds:
+            try:
+                # Check if the checks badge element is present in the DOM
+                # We use presence_of_element_located as it might not be immediately visible
+                WebDriverWait(driver, 5).until(  # Short wait for each check
+                    EC.presence_of_element_located((By.CSS_SELECTOR, checks_badge_selector))
+                )
+                # If the badge is found, we assume the raw upload part is done
+                # YouTube might still be "processing", but we can move to the next screen
+                print_success("Upload appears complete (Checks badge found). Proceeding to 'Next'.", indent=3)
+                upload_complete = True
+                time.sleep(1)  # Small pause just in case UI needs to settle
+                break  # Exit the waiting loop
+            except TimeoutException:
+                # Checks badge not found yet, upload likely still in progress.
+                # Optionally, try to get the progress text for logging
+                try:
+                    progress_label_element = driver.find_element(By.XPATH, progress_label_xpath)
+                    progress_text = progress_label_element.text.strip()
+                    # Avoid printing the same percentage repeatedly if it gets stuck
+                    if hasattr(upload_video, 'last_progress') and upload_video.last_progress == progress_text:
+                        print_info("Still uploading... (Progress appears unchanged)", indent=3)
+                    else:
+                        print_info(f"Still uploading... Progress: {progress_text}", indent=3)
+                        upload_video.last_progress = progress_text  # Store last reported progress
+                except NoSuchElementException:
+                    # Progress label might be gone briefly during transition
+                    print_info("Still uploading... (Progress label temporarily not found)", indent=3)
+                except Exception as e:
+                    # Handle potential stale element or other errors reading progress
+                    print_warning(f"Minor error checking progress label: {e}", indent=3)
+                    log_error_to_file(f"Minor error checking upload progress: {e}", step="wait_upload_complete", video_index=video_index)
+
+                print_info(f"Waiting... (elapsed: {int(time.time() - upload_wait_start_time)}s)", indent=4)
+                time.sleep(10)  # Wait 10 seconds before checking again
+            except Exception as e:
+                print_error(f"Unexpected error while waiting for upload completion: {e}", indent=3, include_traceback=True)
+                log_error_to_file(f"ERROR: Unexpected error waiting for upload {video_index}: {e}", error_type="file_upload", step="wait_upload_complete", video_index=video_index, include_traceback=True)
+                # Decide how to handle: break and try 'Next' anyway, or fail? Let's fail.
+                return None  # Return None to indicate failure
+
+        # Reset last progress tracker outside the loop
+        if hasattr(upload_video, 'last_progress'):
+            del upload_video.last_progress
+
+        if not upload_complete:
+            msg = f"Upload did not appear to complete within {max_wait_upload_seconds / 60:.0f} minutes (Checks badge never appeared)."
+            print_error(msg, indent=2)
+            log_error_to_file(f"ERROR: {msg} for video {video_index}", error_type="file_upload", step="wait_upload_complete_timeout", video_index=video_index)
+            # Fail the upload here if timeout is reached
+            return None
+        # ==================================================================
+        # --- END Wait for Upload Completion ---
+        # ==================================================================
 
         # --- Click through "Next" buttons ---
         print_info("Proceeding through 'Next' steps (Checks, Elements, Visibility)...", indent=2)
