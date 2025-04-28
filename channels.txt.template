@@ -1,0 +1,11 @@
+# YouTube Channels for Channel-Based Downloader
+# Add one channel URL per line
+# Lines starting with # are comments and will be ignored
+
+# Example channels (replace with your preferred channels):
+# https://www.youtube.com/@ExampleChannel1
+# https://www.youtube.com/@ExampleChannel2
+
+# Format can be either:
+# https://www.youtube.com/@ChannelName
+# https://www.youtube.com/channel/CHANNEL_ID
