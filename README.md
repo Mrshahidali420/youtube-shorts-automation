@@ -1,6 +1,6 @@
 # YouTube Shorts Automation Suite with Self-Improvement
 
-[![GitHub Release](https://img.shields.io/github/v/release/Mrshahidali420/youtube-shorts-automation)](https://github.com/Mrshahidali420/youtube-shorts-automation/releases)
+[![GitHub Release](https://img.shields.io/badge/release-v1.3.0-blue)](https://github.com/Mrshahidali420/youtube-shorts-automation/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 This suite of scripts automates the entire YouTube Shorts workflow - from finding videos to tracking performance. It includes advanced self-improvement features that use AI to analyze performance, optimize metadata, and suggest improvements.
@@ -44,6 +44,8 @@ These components work together to create a complete automation pipeline for YouT
 - **AI-Assisted Analysis**: Use Google's Gemini AI to analyze errors and suggest improvements
 - **Debug Recording**: Optional screen recording during uploads for troubleshooting
 - **Excel Auto-Closing**: Automatically detects and closes Excel processes to prevent permission errors when saving
+- **Excel Archiving**: Automatically moves old entries to archive sheets to keep main sheets manageable
+- **Metadata Cross-Validation**: Validates generated metadata for consistency and quality
 
 ## Self-Improvement Features
 
@@ -133,6 +135,11 @@ YOUTUBE_MAX_TAGS_COUNT=40
 ENABLE_DEBUG_RECORDING=False
 # Optional: Specify full path to ffmpeg executable if not found automatically in system PATH
 FFMPEG_PATH=C:\path\to\ffmpeg.exe
+
+# Excel Archiving Settings
+# Number of days to keep entries in the main Excel sheets before moving to archive sheets
+# Older entries will be moved to "Downloaded_Archive" and "Uploaded_Archive" sheets
+EXCEL_ARCHIVE_DAYS=180
 ```
 
 ### Important Configuration Options
@@ -157,7 +164,7 @@ To create a new Firefox profile:
 
 ## Excel File Structure
 
-The system uses an Excel file (`shorts_data.xlsx`) with two sheets:
+The system uses an Excel file (`shorts_data.xlsx`) with four sheets:
 
 ### Downloaded Sheet
 - Video Index
@@ -178,6 +185,16 @@ The system uses an Excel file (`shorts_data.xlsx`) with two sheets:
 - Likes (YT)
 - Comments (YT)
 - Last Updated
+
+### Downloaded_Archive Sheet
+- Contains the same columns as the Downloaded sheet
+- Stores older entries that have been archived from the main Downloaded sheet
+- Created automatically when archiving is performed
+
+### Uploaded_Archive Sheet
+- Contains the same columns as the Uploaded sheet
+- Stores older entries that have been archived from the main Uploaded sheet
+- Created automatically when archiving is performed
 
 ## Requirements
 
@@ -313,17 +330,29 @@ The channel-based downloader will:
 
 ## Releases
 
-### Latest Release: [v1.2.0](https://github.com/Mrshahidali420/youtube-shorts-automation/releases/tag/v1.2.0)
+### Latest Release: [v1.3.0](https://github.com/Mrshahidali420/youtube-shorts-automation/releases/tag/v1.3.0)
 
-The latest stable release of the YouTube Shorts Automation Suite is v1.2.0. You can:
+The latest stable release of the YouTube Shorts Automation Suite is v1.3.0. You can:
 
-- **Download**: Get the [ZIP file](https://github.com/Mrshahidali420/youtube-shorts-automation/archive/refs/tags/v1.2.0.zip) directly
-- **Clone**: Use Git to clone a specific version: `git clone -b v1.2.0 https://github.com/Mrshahidali420/youtube-shorts-automation.git`
-- **Install**: Install with pip: `pip install git+https://github.com/Mrshahidali420/youtube-shorts-automation.git@v1.2.0`
+- **Download**: Get the [ZIP file](https://github.com/Mrshahidali420/youtube-shorts-automation/archive/refs/tags/v1.3.0.zip) directly
+- **Clone**: Use Git to clone a specific version: `git clone -b v1.3.0 https://github.com/Mrshahidali420/youtube-shorts-automation.git`
+- **Install**: Install with pip: `pip install git+https://github.com/Mrshahidali420/youtube-shorts-automation.git@v1.3.0`
 
 ### Release Notes
 
-#### v1.2.0 - Latest Release
+#### v1.3.0 - Latest Release
+
+**New Features:**
+- **Excel Archiving**: Added automatic archiving of old entries to archive sheets to keep main sheets manageable
+- **Metadata Cross-Validation**: Added validation checks for generated metadata to ensure consistency and quality
+- **Configuration for Archiving**: Added EXCEL_ARCHIVE_DAYS setting to control when entries are archived
+
+**Improvements:**
+- Enhanced error handling for Excel archiving operations
+- Improved metadata quality through validation checks
+- Added detailed logging for archiving operations
+
+#### v1.2.0
 
 **New Features:**
 - **Excel Auto-Closing Functionality**: Added robust Excel handling to prevent permission errors when saving Excel files

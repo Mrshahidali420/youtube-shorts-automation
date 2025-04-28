@@ -11,6 +11,7 @@ import random
 import math
 import time
 import traceback
+import collections # For metadata validation
 import colorama # Import colorama
 from colorama import Fore, Style, Back # Import specific styles
 import shutil # For file backups
@@ -456,6 +457,54 @@ def generate_seo_metadata(video_topic, uploader_name="Unknown Uploader", origina
             # else: Title is already too long even without suffix
 
         metadata["title"] = temp_title
+
+        # --- Cross-Validation Checks ---
+        validation_warnings = []
+        # Check 1: Title in Description (simplified check)
+        try:
+            title_check = metadata.get("title", "").replace(SHORTS_SUFFIX, "").strip().lower()
+            desc_check = metadata.get("description", "").lower()
+            if title_check and title_check not in desc_check:
+                # Allow for minor variations, check first ~20 chars maybe?
+                if title_check[:20] not in desc_check[:max(200, len(title_check)+50)]:  # Check beginning of desc
+                    validation_warnings.append("Title not found near start of description.")
+        except Exception as e:
+            validation_warnings.append(f"Title check failed: {e}")
+
+        # Check 2: Tags listed in Description
+        try:
+            tags_heading = "Tags Used in Video :-".lower()
+            desc_check = metadata.get("description", "").lower()
+            tags_list = metadata.get("tags", [])
+            heading_index = desc_check.find(tags_heading)
+            if tags_list and heading_index == -1:
+                validation_warnings.append("Tags list heading missing in description.")
+            elif tags_list and heading_index != -1:
+                desc_after_heading = desc_check[heading_index:]
+                # Check if at least one of the first 5 tags is listed
+                if not any(tag.lower() in desc_after_heading for tag in tags_list[:5]):
+                    validation_warnings.append("First few tags not found listed in description after heading.")
+        except Exception as e:
+            validation_warnings.append(f"Tag list check failed: {e}")
+
+        # Check 3: Basic Keyword Stuffing
+        try:
+            text_to_check = metadata.get("description", "") + " " + " ".join(metadata.get("tags", []))
+            words = re.findall(r'\b\w{4,}\b', text_to_check.lower())  # Words 4+ chars
+            if len(words) > 20:  # Only check if there's enough text
+                word_counts = collections.Counter(words)
+                most_common = word_counts.most_common(3)
+                # Check if top words appear excessively (e.g., > 15 times)
+                if most_common and most_common[0][1] > 15:
+                    validation_warnings.append(f"Potential keyword stuffing detected for word: '{most_common[0][0]}' ({most_common[0][1]} times).")
+        except Exception as e:
+            validation_warnings.append(f"Stuffing check failed: {e}")
+
+        if validation_warnings:
+            print_warning(f"Metadata validation warnings for '{video_topic}':", 1)
+            for warn in validation_warnings:
+                print_warning(f"- {warn}", 2)
+        # --- End Cross-Validation Checks ---
 
         # Add top 5 tags as hashtags to the description if not already present
         # (The SEO prompt asks for hashtags at the end, but this ensures some are there if the prompt fails)

@@ -65,6 +65,11 @@ NEW_KEYWORDS_TO_GENERATE=15
 # Maximum videos to download for a single keyword (prevents overreliance on a single keyword)
 VIDEOS_TO_DOWNLOAD_PER_KEYWORD=5
 
+# --- Excel Archiving Settings ---
+# Number of days to keep entries in the main Excel sheets before moving to archive sheets
+# Older entries will be moved to "Downloaded_Archive" and "Uploaded_Archive" sheets
+EXCEL_ARCHIVE_DAYS=180
+
 # --- Channel-Based Downloader Settings ---
 # SEO settings for channel-based downloader
 SEO_CHANNEL_NAME=Your Channel Name

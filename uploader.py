@@ -1957,6 +1957,45 @@ def main():
         print_section_header("Checking Scheduled Video Status")
         if check_and_update_scheduled(uploaded_sheet): excel_save_required = True
 
+        # --- Archiving Old Excel Entries ---
+        print_section_header("Archiving Old Excel Entries")
+        # Get archive days from config or use default
+        try:
+            archive_days = int(config.get("EXCEL_ARCHIVE_DAYS", 180))
+            if archive_days <= 0:
+                print_warning(f"Invalid EXCEL_ARCHIVE_DAYS value: {archive_days}. Using default of 180 days.", indent=1)
+                archive_days = 180
+        except (ValueError, TypeError):
+            print_warning(f"Invalid EXCEL_ARCHIVE_DAYS in config. Using default of 180 days.", indent=1)
+            archive_days = 180
+
+        print_info(f"Archiving Excel entries older than {archive_days} days", indent=1)
+        archived_downloaded = False
+        archived_uploaded = False
+
+        if excel_utils_available:
+            try:
+                if downloaded_sheet:
+                    archived_downloaded = excel_utils.archive_old_excel_entries(wb, "Downloaded", "Downloaded Date", archive_days)
+                if uploaded_sheet:
+                    archived_uploaded = excel_utils.archive_old_excel_entries(wb, "Uploaded", "Uploaded Date", archive_days)
+                if archived_downloaded:
+                    print_success(f"Successfully archived old entries from 'Downloaded' sheet", indent=2)
+                    excel_save_required = True
+                else:
+                    print_info(f"No entries in 'Downloaded' sheet needed archiving", indent=2)
+
+                if archived_uploaded:
+                    print_success(f"Successfully archived old entries from 'Uploaded' sheet", indent=2)
+                    excel_save_required = True
+                else:
+                    print_info(f"No entries in 'Uploaded' sheet needed archiving", indent=2)
+            except Exception as e:
+                print_error(f"Error during Excel archiving: {e}", indent=1, include_traceback=True)
+                log_error_to_file(f"Error during Excel archiving: {e}", include_traceback=True)
+        else:
+            print_warning("Excel archiving skipped: excel_utils module not available.", indent=1)
+
         uploaded_count = 0
         # --- Scheduling Tracking Variables ---
         last_schedule_time: Optional[datetime] = None # Tracks the last successfully calculated schedule time for interval calc

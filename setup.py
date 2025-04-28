@@ -7,7 +7,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="youtube-shorts-automation",
-    version="1.0.0",
+    version="1.3.0",
     description="A suite of tools for automating YouTube Shorts creation and management",
     long_description=long_description,
     long_description_content_type="text/markdown",
@@ -26,11 +26,13 @@ setup(
         "webdriver-manager>=3.8.6",
         "google-api-python-client>=2.0.0",
         "google-auth-oauthlib>=0.4.6",
+        "psutil>=5.9.0",
     ],
     entry_points={
         "console_scripts": [
             "yt-track=youtube_shorts.performance_tracker:main",
             "yt-download=youtube_shorts.downloader:main",
+            "yt-channel=youtube_shorts.downloader_channel:main",
             "yt-upload=youtube_shorts.uploader:main",
             "yt-setup=youtube_shorts.setup_workspace:main",
         ],
