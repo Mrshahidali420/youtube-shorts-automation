@@ -12,6 +12,17 @@ from openpyxl import Workbook, load_workbook
 from openpyxl.worksheet.worksheet import Worksheet
 import traceback
 import random # Needed for weighted selection if we adapt quota later
+from typing import List, Dict, Set, Any, Optional, Tuple
+import collections # For metadata validation
+# For YouTube Data API
+try:
+    from googleapiclient.discovery import build
+    from googleapiclient.errors import HttpError
+    YOUTUBE_API_AVAILABLE = True
+except ImportError:
+    print("Warning: Google API libraries not found. Install with:")
+    print("pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib")
+    YOUTUBE_API_AVAILABLE = False
 
 # --- Colorama Setup ---
 try:
@@ -46,6 +57,8 @@ PERFORMANCE_METRICS_FILENAME = "performance_metrics_channel.json" # Specific met
 TUNING_SUGGESTIONS_FILENAME = "tuning_suggestions_channel.log" # Specific log file
 UPLOAD_CORRELATION_CACHE_FILENAME = "upload_correlation_cache.json" # Shared with uploader
 CHANNEL_PERFORMANCE_CACHE_FILENAME = "channel_performance_cache.json" # New cache for channel scores
+SUGGESTED_CHANNELS_FILENAME = "suggested_channels.log" # Log file for suggested related channels
+KEYWORDS_CACHE_FILENAME = "generated_keywords_cache.json" # Shared cache with keyword downloader
 
 # Excel Sheet Names / Headers / Indices
 DOWNLOADED_SHEET_NAME = "Downloaded"
@@ -106,6 +119,8 @@ performance_metrics_file_path = os.path.join(script_directory, PERFORMANCE_METRI
 tuning_suggestions_file_path = os.path.join(script_directory, TUNING_SUGGESTIONS_FILENAME)
 upload_correlation_cache_path = os.path.join(script_directory, UPLOAD_CORRELATION_CACHE_FILENAME)
 channel_performance_cache_path = os.path.join(script_directory, CHANNEL_PERFORMANCE_CACHE_FILENAME)
+suggested_channels_file_path = os.path.join(script_directory, SUGGESTED_CHANNELS_FILENAME)
+keywords_cache_file_path = os.path.join(script_directory, KEYWORDS_CACHE_FILENAME)
 
 # --- Global Cache for SEO Prompt ---
 _current_seo_prompt_template = None
@@ -1185,6 +1200,30 @@ def main():
         channel_listing_cache = load_cache(channel_listing_cache_file, "Channel Listing") # Load permanent channel list cache
         channel_scores = load_cache(channel_performance_cache_path, "Channel Performance") # Load channel scores
 
+        # Load keyword frequency cache (for tag extraction)
+        keyword_frequency = load_cache(keywords_cache_file_path, "Keyword Frequency")
+
+        # Define keyword filtering criteria (for tag extraction)
+        required_substrings = ["GTA", "Grand Theft Auto"] # Example, adjust to your niche
+        required_substrings_lower = [sub.lower() for sub in required_substrings]
+        social_media_lower = {"twitch", "youtube", "facebook", "instagram", "tiktok", "x", "reddit", "discord", "kick"}
+        generic_terms_lower = {"gaming", "video game", "gameplay", "shorts", "short", "viral", "trending", "funny", "meme", "edit", "clip", "clips"}
+
+        # Load max_keywords config
+        _DEFAULT_MAX_KEYWORDS = 200
+        try:
+            max_keywords = int(config.get("MAX_KEYWORDS", _DEFAULT_MAX_KEYWORDS))
+        except:
+            max_keywords = _DEFAULT_MAX_KEYWORDS
+
+        # Load seed_niche
+        try:
+            niche_file_path = os.path.join(script_directory, "niche.txt")
+            with open(niche_file_path, "r", encoding="utf-8") as f:
+                seed_niche = f.readline().strip()
+        except:
+            seed_niche = "GTA" # Default niche if file not found
+
         # --- Correlate Performance Data with Channels ---
         print(f"{Fore.BLUE}--- Correlating Performance Data with Channels ---{Style.RESET_ALL}")
         channel_performance_feedback = {} # Key: channel_url, Value: List of perf dicts
@@ -1328,6 +1367,53 @@ def main():
                 print_info("No tuning suggestions generated. Not enough performance data yet.")
         else:
             print_info("Skipping tuning suggestions - not enough performance data yet.")
+
+        # --- Dynamic Source Exploration: Related Channels ---
+        print(f"\n{Fore.CYAN}{Style.BRIGHT}--- Dynamic Source Exploration: Related Channels ---{Style.RESET_ALL}")
+        # Define how many top channels to check (make configurable?)
+        num_top_channels_to_check = 3
+        # Define threshold for considering a channel "top" (make configurable?)
+        min_score_threshold = 5.0  # Example score threshold
+
+        service = None  # Initialize service variable
+        suggested_new_channels = []
+
+        if YOUTUBE_API_AVAILABLE:
+            top_performing_channels = [
+                url for url, score in sorted(channel_scores.items(), key=lambda item: item[1], reverse=True)
+                if score >= min_score_threshold
+            ][:num_top_channels_to_check]  # Get top N above threshold
+
+            if top_performing_channels:
+                print_info(f"Identified {len(top_performing_channels)} top channels for related search.")
+                # Authenticate only if needed
+                service = get_authenticated_service()
+                if service:
+                    current_channels_set = set(channels)  # Set for faster lookups
+                    suggested_new_channels = find_related_channels(
+                        top_performing_channels,
+                        channel_listing_cache,
+                        current_channels_set,
+                        service
+                    )
+                else:
+                    print_warning("Cannot search for related channels, API service unavailable.")
+            else:
+                print_info("No channels met the criteria for related channel search.")
+        else:
+            print_warning("YouTube API not available. Install required packages to enable related channel search.")
+
+        if suggested_new_channels:
+            # Log suggestions for manual review
+            print_success(f"Found {len(suggested_new_channels)} new channel suggestions. Logging to {suggested_channels_file_path}")
+            try:
+                with open(suggested_channels_file_path, "a", encoding="utf-8") as f:
+                    f.write(f"\n=== Suggestions [{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] ===\n")
+                    for url in suggested_new_channels:
+                        f.write(f"{url}\n")
+            except Exception as e:
+                print_error(f"Failed to write suggestions to log file: {e}")
+            # Note: We're not automatically adding channels, just logging them for manual review
 
         # --- Start Download Process ---
         print(f"\n{Fore.CYAN}{Style.BRIGHT}--- Starting Download Process ---{Style.RESET_ALL}")
@@ -1508,6 +1594,7 @@ def main():
                     'outtmpl': video_file_path, 'quiet': True, 'no_warnings': True,
                     'ignoreerrors': False, 'ffmpeg_location': ffmpeg_path,
                     'merge_output_format': 'mp4', 'retries': 2,
+                    'writeinfojson': True,  # Enable info.json for tag extraction
                  }
                 download_success = False
                 try:
@@ -1525,6 +1612,74 @@ def main():
                         ts = generated_metadata.get("download_timestamp", datetime.now().isoformat()); views = generated_metadata.get('view_count', 0)
                         downloaded_video_data.append((f"video{video_counter}", generated_metadata.get("optimized_title"), ts, views, generated_metadata.get("uploader"), generated_metadata.get("original_title")))
                         playlist_cache[channel_url].append(str(video_id)); previously_downloaded_videos.add((original_title, uploader))
+
+                        # --- Tag Extraction & Keyword Pool Update ---
+                        info_json_path = os.path.splitext(video_file_path)[0] + ".info.json"
+                        if os.path.exists(info_json_path):
+                            try:
+                                with open(info_json_path, 'r', encoding='utf-8') as f:
+                                    video_info = json.load(f)
+                                video_tags = video_info.get('tags', [])
+                                if video_tags:
+                                    print_info(f"Processing {len(video_tags)} tags from info file...", 3)
+                                    new_unique_tags_found = set()
+                                    lower_to_original_keyword_map = {kw.lower(): kw for kw in keyword_frequency.keys()}
+
+                                    # Identify potentially new keywords
+                                    for tag in video_tags:
+                                        tag_strip = tag.strip()
+                                        tag_lower = tag_strip.lower()
+                                        if not tag_lower:
+                                            continue
+
+                                        # Use the filtering criteria loaded earlier
+                                        is_relevant = any(sub in tag_lower for sub in required_substrings_lower)
+                                        is_not_social = tag_lower not in social_media_lower
+                                        is_not_generic = tag_lower not in generic_terms_lower
+                                        is_not_seed = tag_lower != seed_niche.lower()
+                                        is_new = tag_lower not in lower_to_original_keyword_map
+                                        is_long_enough = len(tag_lower.replace(" ", "")) > 3
+
+                                        if is_relevant and is_not_social and is_not_generic and is_not_seed and is_new and is_long_enough:
+                                            new_unique_tags_found.add(tag_strip)
+
+                                    # Add new keywords / replace old ones
+                                    if new_unique_tags_found:
+                                        print_info(f"Found {len(new_unique_tags_found)} relevant new unique tags from channel video.", 4)
+                                        tags_to_add_list = list(new_unique_tags_found)
+                                        added_count = 0
+                                        for tag_to_add in tags_to_add_list:
+                                            if len(keyword_frequency) < max_keywords:
+                                                keyword_frequency[tag_to_add] = 0  # Add with score 0
+                                                added_count += 1
+                                            else:
+                                                # Find lowest scored keyword to replace
+                                                lowest_kw = min(keyword_frequency.items(), key=lambda x: x[1])
+                                                if lowest_kw[1] <= 0:  # Only replace if score is 0 or negative
+                                                    del keyword_frequency[lowest_kw[0]]
+                                                    keyword_frequency[tag_to_add] = 0
+                                                    added_count += 1
+                                                    print_info(f"Replaced low-scoring keyword '{lowest_kw[0]}' with new tag '{tag_to_add}'", 4)
+
+                                        if added_count > 0:
+                                            print_success(f"Added {added_count} new keywords from tags. Total keywords: {len(keyword_frequency)}.", 4)
+                                            save_cache(keyword_frequency, keywords_cache_file_path, "Keyword Frequency")  # Save immediately after adding
+                                else:
+                                    print_info("No tags found in info file.", 3)
+                            except json.JSONDecodeError as json_e:
+                                print_error(f"Error decoding info.json '{info_json_path}': {json_e}", 3)
+                            except Exception as tag_e:
+                                print_error(f"Error processing tags from info.json '{info_json_path}': {tag_e}", 3, include_traceback=True)
+                            finally:  # Cleanup info.json AFTER processing
+                                try:
+                                    if os.path.exists(info_json_path):
+                                        os.remove(info_json_path)
+                                except OSError as e_del:
+                                    print_warning(f"Error deleting info.json '{info_json_path}': {e_del}", 4)
+                        else:
+                            print_warning(f"Info file not found, skipping tag extraction: {info_json_path}", 3)
+                        # --- End Tag Extraction ---
+
                         video_counter += 1; total_downloaded_this_run += 1; channel_download_counts[channel_url] += 1
                         print(f"  Processed video {video_counter-1} successfully.") # Confirmation log
                     else: # Metadata failed, delete video
@@ -1687,6 +1842,12 @@ def main():
             save_cache(channel_listing_cache, channel_listing_cache_file, "Channel Listing")
         else:
             print_warning("Channel listing cache invalid type. Skipping save.")
+
+        # Save the keyword frequency cache
+        if isinstance(keyword_frequency, dict):
+            save_cache(keyword_frequency, keywords_cache_file_path, "Keyword Frequency")
+        else:
+            print_warning("Keyword frequency cache invalid type. Skipping save.")
 
         # Update and save performance metrics
         if 'run_metrics' in locals() and isinstance(run_metrics, dict):
@@ -2127,6 +2288,140 @@ def generate_tuning_suggestions(metrics, config):
         return None
 # --- End Tuning Suggestions ---
 
+# --- YouTube API Authentication ---
+def get_authenticated_service():
+    """Gets an authenticated YouTube Data API service."""
+    if not YOUTUBE_API_AVAILABLE:
+        print_error("Google API libraries not available.")
+        return None
+
+    import pickle
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    from google.auth.transport.requests import Request
+
+    # Define constants for authentication
+    CLIENT_SECRETS_FILE = os.path.join(script_directory, "client_secret.json")
+    TOKEN_FILE = os.path.join(script_directory, "token.json")
+    SCOPES = ["https://www.googleapis.com/auth/youtube.readonly"]
+
+    creds = None
+    if os.path.exists(TOKEN_FILE):
+        try:
+            with open(TOKEN_FILE, 'rb') as token:
+                creds = pickle.load(token)
+            print_success("Cached credentials loaded.")
+        except Exception as e:
+            print_warning(f"Failed to load cached credentials: {e}. Will re-authenticate.")
+            creds = None
+
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+                print_success("Credentials refreshed successfully.")
+            except Exception as e:
+                print_warning(f"Failed to refresh credentials: {e}. Will perform new auth.")
+                creds = None
+        else:
+            print_info("No valid cached credentials. Starting new authentication flow.")
+            if not os.path.exists(CLIENT_SECRETS_FILE):
+                print_error(f"FATAL: Client secrets file not found: {CLIENT_SECRETS_FILE}")
+                return None
+            try:
+                flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS_FILE, SCOPES)
+                creds = flow.run_local_server(port=0)
+                print_success("Authentication flow completed.")
+            except Exception as e:
+                print_error(f"Auth flow error: {e}", include_traceback=True)
+                return None
+
+        if creds and creds.valid:
+            try:
+                with open(TOKEN_FILE, 'wb') as token:
+                    pickle.dump(creds, token)
+                print_success(f"Credentials saved to: {TOKEN_FILE}")
+            except Exception as e:
+                print_warning(f"Failed to save credentials: {e}")
+
+    if creds and creds.valid:
+        try:
+            service = build('youtube', 'v3', credentials=creds)
+            print_success("YouTube Data API service built.")
+            return service
+        except Exception as e:
+            print_error(f"API service build error: {e}", include_traceback=True)
+            return None
+    else:
+        print_error("Authentication failed.")
+        return None
+
+# --- Related Channels Discovery ---
+def find_related_channels(top_channels: List[str], channel_listing_cache: Dict, current_channels_set: Set[str], service: Any, max_to_suggest: int = 5) -> List[str]:
+    """Finds suggested related channels using YouTube API."""
+    if not service:
+        print_warning("YouTube API service not available, skipping related channel search.")
+        return []
+
+    suggested_channels = set()
+    checked_channels = 0
+
+    print_info("Searching for related channels based on top performers...")
+
+    for channel_url in top_channels:
+        if checked_channels >= max_to_suggest:  # Limit API calls per run
+            break
+
+        print_info(f"Checking related channels for: {channel_url}", 1)
+        video_id_to_check = None
+        # Get a video ID from this channel's cache
+        cached_entries = channel_listing_cache.get(channel_url, [])
+        if cached_entries and isinstance(cached_entries, list) and len(cached_entries) > 0:
+            # Try getting the first video's ID (often highest views if sorted)
+            video_id_to_check = cached_entries[0].get('id')
+
+        if not video_id_to_check:
+            print_warning(f"Could not find a video ID in cache for {channel_url} to find related channels.", 2)
+            continue
+
+        try:
+            search_response = service.search().list(
+                part="snippet",
+                relatedToVideoId=video_id_to_check,
+                type="channel",
+                maxResults=5  # Limit results per query
+            ).execute()
+
+            found_count = 0
+            for item in search_response.get("items", []):
+                related_channel_id = item.get("snippet", {}).get("channelId")
+                related_channel_title = item.get("snippet", {}).get("title")
+                if related_channel_id and related_channel_title:
+                    related_channel_url = f"https://www.youtube.com/channel/{related_channel_id}"
+                    # Check if it's new and not already suggested
+                    if related_channel_url not in current_channels_set and related_channel_url not in suggested_channels:
+                        print_success(f"Found related channel suggestion: '{related_channel_title}' ({related_channel_url})", 2)
+                        suggested_channels.add(related_channel_url)
+                        found_count += 1
+
+            if found_count == 0:
+                print_info("No new related channels found for this source.", 2)
+
+            checked_channels += 1  # Count this channel check towards the limit
+            time.sleep(1)  # Avoid hitting API limits too quickly
+
+        except HttpError as e:
+            print_error(f"API Error finding related channels for video {video_id_to_check}: {e}", 2)
+            # Break if quota exceeded or serious error
+            if e.resp.status in [403, 400]:
+                print_error("API quota likely exceeded or bad request. Stopping related channel search for this run.", 2)
+                break
+        except Exception as e:
+            print_error(f"Unexpected error finding related channels for video {video_id_to_check}: {e}", 2, include_traceback=True)
+            # Optionally break on unexpected errors too
+
+    return list(suggested_channels)
+# --- End Related Channels Discovery ---
+
 # --- Enhanced Metadata Generation ---
 def generate_metadata_with_timeout_v2(video_title, uploader_name, original_title="Unknown Title", timeout=METADATA_TIMEOUT_SECONDS):
     """Generates metadata with timeout, includes category suggestion."""
@@ -2209,6 +2504,54 @@ def generate_metadata_with_timeout_v2(video_title, uploader_name, original_title
                         if len(temp_title) + len(SHORTS_SUFFIX) <= MAX_TITLE_LENGTH:
                             temp_title += SHORTS_SUFFIX
                     metadata["title"] = temp_title
+
+                    # --- Cross-Validation Checks ---
+                    validation_warnings = []
+                    # Check 1: Title in Description (simplified check)
+                    try:
+                        title_check = metadata.get("title", "").replace(SHORTS_SUFFIX, "").strip().lower()
+                        desc_check = metadata.get("description", "").lower()
+                        if title_check and title_check not in desc_check:
+                            # Allow for minor variations, check first ~20 chars maybe?
+                            if title_check[:20] not in desc_check[:max(200, len(title_check)+50)]:  # Check beginning of desc
+                                validation_warnings.append("Title not found near start of description.")
+                    except Exception as e:
+                        validation_warnings.append(f"Title check failed: {e}")
+
+                    # Check 2: Tags listed in Description
+                    try:
+                        tags_heading = "Tags Used in Video :-".lower()
+                        desc_check = metadata.get("description", "").lower()
+                        tags_list = metadata.get("tags", [])
+                        heading_index = desc_check.find(tags_heading)
+                        if tags_list and heading_index == -1:
+                            validation_warnings.append("Tags list heading missing in description.")
+                        elif tags_list and heading_index != -1:
+                            desc_after_heading = desc_check[heading_index:]
+                            # Check if at least one of the first 5 tags is listed
+                            if not any(tag.lower() in desc_after_heading for tag in tags_list[:5]):
+                                validation_warnings.append("First few tags not found listed in description after heading.")
+                    except Exception as e:
+                        validation_warnings.append(f"Tag list check failed: {e}")
+
+                    # Check 3: Basic Keyword Stuffing
+                    try:
+                        text_to_check = metadata.get("description", "") + " " + " ".join(metadata.get("tags", []))
+                        words = re.findall(r'\b\w{4,}\b', text_to_check.lower())  # Words 4+ chars
+                        if len(words) > 20:  # Only check if there's enough text
+                            word_counts = collections.Counter(words)
+                            most_common = word_counts.most_common(3)
+                            # Check if top words appear excessively (e.g., > 15 times)
+                            if most_common and most_common[0][1] > 15:
+                                validation_warnings.append(f"Potential keyword stuffing detected for word: '{most_common[0][0]}' ({most_common[0][1]} times).")
+                    except Exception as e:
+                        validation_warnings.append(f"Stuffing check failed: {e}")
+
+                    if validation_warnings:
+                        print_warning(f"Metadata validation warnings for '{video_title}':", 1)
+                        for warn in validation_warnings:
+                            print_warning(f"- {warn}", 2)
+                    # --- End Cross-Validation Checks ---
 
                     return metadata
                 except Exception as e:
