@@ -849,8 +849,8 @@ def generate_tuning_suggestions(metrics, config):
         response = model.generate_content(prompt)
         suggestions = response.text.strip()
         suggestions_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), TUNING_SUGGESTIONS_FILENAME)
-        with open(suggestions_file_path, "a", encoding="utf-8") as f:
-            f.write(f"\n\n=== Tuning Suggestions ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')}) ===\nBased on Config:\n{config_text}\n\nPerformance Summary:\n{performance_summary}\n\nSuggestions:\n{suggestions}\n")
+        with open(suggestions_file_path, "w", encoding="utf-8") as f:
+            f.write(f"=== Tuning Suggestions ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')}) ===\nBased on Config:\n{config_text}\n\nPerformance Summary:\n{performance_summary}\n\nSuggestions:\n{suggestions}\n")
         return suggestions
     except Exception as e: print_error(f"Error generating tuning suggestions: {e}", 1); return None
 

@@ -893,12 +893,31 @@ def load_or_create_excel():
 
     # Try to import excel_utils module
     try:
+        # First try to import from the current directory
         import excel_utils
         excel_utils_available = True
-        print_info("Using excel_utils module for robust Excel handling")
+        print_info("Using excel_utils module for robust Excel handling with auto-closing")
     except ImportError:
-        excel_utils_available = False
-        print_warning("excel_utils module not available. Using fallback Excel handling.")
+        # If that fails, try to import using the full path
+        try:
+            import sys
+            import os
+            script_directory = os.path.dirname(os.path.abspath(__file__))
+            excel_utils_path = os.path.join(script_directory, "excel_utils.py")
+
+            if os.path.exists(excel_utils_path):
+                import importlib.util
+                spec = importlib.util.spec_from_file_location("excel_utils", excel_utils_path)
+                excel_utils = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(excel_utils)
+                excel_utils_available = True
+                print_info(f"Using excel_utils module from {excel_utils_path}")
+            else:
+                excel_utils_available = False
+                print_warning(f"excel_utils.py not found at {excel_utils_path}")
+        except Exception as e:
+            excel_utils_available = False
+            print_warning(f"excel_utils module not available: {e}. Using fallback Excel handling.")
 
     # Define sheet configuration
     sheets_config = {
@@ -950,7 +969,7 @@ def load_or_create_excel():
         else:
             log_error("Could not load previous videos: Downloaded sheet object invalid.")
 
-        # Save if needed using robust save mechanism
+        # Save if needed using robust save mechanism with Excel auto-closing
         if save_needed:
             if not excel_utils.safe_save_workbook(wb, excel_file, close_excel=True, create_backup=True):
                 log_warning(f"Could not save structural changes to Excel. Will try again later.")
@@ -1019,6 +1038,16 @@ def load_or_create_excel():
                     except PermissionError as pe:
                         if attempt < max_retries - 1:
                             print(f"PermissionError saving Excel (attempt {attempt+1}/{max_retries}): {pe}")
+
+                            # Try to close Excel if excel_utils is available
+                            try:
+                                import excel_utils
+                                if excel_utils.close_excel_processes_with_file(excel_file):
+                                    print("Successfully closed Excel processes. Retrying immediately...")
+                                    continue
+                            except ImportError:
+                                pass  # excel_utils not available
+
                             print(f"Retrying in 2 seconds...")
                             time.sleep(2)
                         else:
@@ -1563,9 +1592,29 @@ def main():
                         return data
 
                     # Use the robust save mechanism
-                    if excel_utils.save_workbook_with_fallback(wb, excel_file, extract_data):
-                        print_success("Excel saved successfully using excel_utils.")
-                    else:
+                    try:
+                        # Try to close Excel before saving
+                        excel_utils.close_excel_processes_with_file(excel_file)
+
+                        # Use the safe_save_workbook function with extract_data as a fallback
+                        if excel_utils.safe_save_workbook(wb, excel_file, close_excel=True, create_backup=True):
+                            print_success("Excel saved successfully using excel_utils.")
+                        else:
+                            # If safe_save_workbook fails, try to save to an alternative file
+                            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                            alt_file_path = f"{os.path.splitext(excel_file)[0]}_alt_{timestamp}.xlsx"
+
+                            print_warning(f"Attempting to save to alternative file: {alt_file_path}")
+                            if excel_utils.safe_save_workbook(wb, alt_file_path, close_excel=False, create_backup=False):
+                                print_success(f"Saved to alternative file: {alt_file_path}")
+                            else:
+                                # If both Excel saves failed, save as JSON
+                                data = extract_data(wb)
+                                backup_file = os.path.join(script_directory, f"excel_backup_data_{datetime.now():%Y%m%d_%H%M%S}.json")
+                                with open(backup_file, "w", encoding='utf-8') as bf:
+                                    json.dump(data, bf, indent=4, default=str)
+                                    print_success(f"Saved data as JSON backup: {backup_file}")
+                    except Exception as e:
                         # If all save methods failed, create a JSON backup
                         backup_file = os.path.join(script_directory, f"excel_backup_data_{datetime.now():%Y%m%d_%H%M%S}.json")
                         print(f"All Excel save methods failed. Creating JSON backup: {backup_file}")
@@ -2065,8 +2114,8 @@ def generate_tuning_suggestions(metrics, config):
         response = model.generate_content(prompt)
         suggestions = response.text.strip()
 
-        with open(tuning_suggestions_file_path, "a", encoding="utf-8") as f:
-            f.write(f"\n\n=== Tuning Suggestions ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')}) ===\nConfig:\n{config_text}\n\nSummary:\n{performance_summary}\n\nSuggestions:\n{suggestions}\n")
+        with open(tuning_suggestions_file_path, "w", encoding="utf-8") as f:
+            f.write(f"=== Tuning Suggestions ({datetime.now().strftime('%Y-%m-%d %H:%M:%S')}) ===\nConfig:\n{config_text}\n\nSummary:\n{performance_summary}\n\nSuggestions:\n{suggestions}\n")
 
         return suggestions
     except Exception as e:
