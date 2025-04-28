@@ -1,8 +1,8 @@
 # GTA 6 YouTube Automation Tool Configuration
 
 API_KEY=AIzaSyB5tTArK4YWMD4JO_hb4z6RFP2cRY19Usg
-MAX_DOWNLOADS=12
-MAX_UPLOADS=12
+MAX_DOWNLOADS=24
+MAX_UPLOADS=24
 MAX_KEYWORDS=200
 
 # Upload Settings
@@ -18,7 +18,7 @@ SCHEDULING_MODE=default_interval
 
 # Fixed interval (in minutes) used for scheduling in 'default_interval' mode
 # AND as the fallback interval in 'custom_tomorrow' mode when custom slots are exhausted/invalid.
-SCHEDULE_INTERVAL_MINUTES=120
+SCHEDULE_INTERVAL_MINUTES=60
 
 # List of preferred schedule times (HH:MM AM/PM format, comma-separated) for 'custom_tomorrow' mode.
 # The script will try to use these times sequentially for videos in a run, always targeting TOMORROW's date or later.

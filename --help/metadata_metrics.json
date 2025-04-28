@@ -1,0 +1,10 @@
+{
+    "total_api_calls": 0,
+    "parse_failures": 0,
+    "timeouts": 0,
+    "empty_title_errors": 0,
+    "empty_description_errors": 0,
+    "empty_tags_errors": 0,
+    "last_run_date": "",
+    "error_samples": []
+}

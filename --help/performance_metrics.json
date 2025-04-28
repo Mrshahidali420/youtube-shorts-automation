@@ -1,0 +1,11 @@
+{
+    "total_shorts_found": 0,
+    "total_suitable_shorts": 0,
+    "total_downloads_attempted": 0,
+    "total_successful_downloads": 0,
+    "total_metadata_api_calls": 0,
+    "total_metadata_errors": 0,
+    "total_download_errors": 0,
+    "keyword_performance": {},
+    "runs": []
+}

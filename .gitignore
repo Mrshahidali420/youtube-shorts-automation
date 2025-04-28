@@ -10,11 +10,17 @@ config.txt
 *token.json
 *token.pickle
 *client_secrets.json
+*client_secret.json
 *credentials.json
 .env
 .env.*
 .secret
 .netrc
+
+# Large binary files
+*.exe
+ffmpeg.exe
+geckodriver.exe
 
 # Downloaded videos and metadata
 shorts_downloads/

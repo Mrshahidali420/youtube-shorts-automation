@@ -1,0 +1,2 @@
+=== Uploader Analysis Log ===
+This file will contain AI-generated analysis of upload errors and performance metrics.

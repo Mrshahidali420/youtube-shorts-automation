@@ -1,0 +1,14 @@
+{
+    "total_api_calls": 60,
+    "parse_failures": 0,
+    "timeouts": 0,
+    "empty_title_errors": 0,
+    "empty_description_errors": 0,
+    "empty_tags_errors": 0,
+    "hashtag_count_errors": 0,
+    "tag_mismatch_errors": 0,
+    "last_run_date": "2025-04-28T16:01:33.154201",
+    "error_samples": [],
+    "total_api_calls_previous": 0,
+    "total_errors_previous": 0
+}
