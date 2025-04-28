@@ -24,22 +24,22 @@ def print_error(msg): print(f"{Fore.RED}ERROR:{Style.RESET_ALL} {msg}")
 def setup_workspace(target_dir=None):
     """
     Set up the working directory with necessary folders and files.
-    
+
     Args:
         target_dir: The target directory to set up. If None, uses the current directory.
     """
     # Determine target directory
     if target_dir is None:
         target_dir = os.getcwd()
-    
+
     print_info(f"Setting up workspace in: {target_dir}")
-    
+
     # Create directories
     directories = [
         "shorts_downloads",
         "shorts_metadata"
     ]
-    
+
     for directory in directories:
         dir_path = os.path.join(target_dir, directory)
         if not os.path.exists(dir_path):
@@ -47,49 +47,57 @@ def setup_workspace(target_dir=None):
             print_success(f"Created directory: {directory}")
         else:
             print_info(f"Directory already exists: {directory}")
-    
+
     # Copy template files
     template_files = {
         "config.txt.template": "config.txt",
-        "niche.txt.template": "niche.txt"
+        "niche.txt.template": "niche.txt",
+        "channels.txt.template": "channels.txt"
     }
-    
+
     package_dir = os.path.dirname(os.path.abspath(__file__))
     data_dir = os.path.join(package_dir, "data")
-    
+    repo_templates_dir = os.path.join(os.path.dirname(package_dir), "templates")
+
     for template, target in template_files.items():
         template_path = os.path.join(data_dir, template)
+        repo_template_path = os.path.join(repo_templates_dir, template)
         target_path = os.path.join(target_dir, target)
-        
+
         if not os.path.exists(target_path):
+            # First try the package data directory
             if os.path.exists(template_path):
                 shutil.copy2(template_path, target_path)
-                print_success(f"Created file: {target}")
+                print_success(f"Created file: {target} (from package data)")
+            # Then try the repository templates directory
+            elif os.path.exists(repo_template_path):
+                shutil.copy2(repo_template_path, target_path)
+                print_success(f"Created file: {target} (from repository templates)")
             else:
                 print_error(f"Template file not found: {template}")
         else:
             print_info(f"File already exists: {target}")
-    
+
     # Create Excel file if it doesn't exist
     excel_path = os.path.join(target_dir, "shorts_data.xlsx")
     if not os.path.exists(excel_path):
         wb = Workbook()
-        
+
         # Set up Downloaded sheet
         downloaded_sheet = wb.active
         downloaded_sheet.title = "Downloaded"
         downloaded_sheet.append(["Video Index", "Optimized Title", "Downloaded Date", "Views", "Uploader", "Original Title"])
-        
+
         # Set up Uploaded sheet
         uploaded_sheet = wb.create_sheet(title="Uploaded")
         uploaded_sheet.append(["Video Index", "Optimized Title", "YouTube Video ID", "Upload Timestamp", "Scheduled Time", "Publish Status"])
-        
+
         # Save the workbook
         wb.save(excel_path)
         print_success(f"Created Excel file: shorts_data.xlsx")
     else:
         print_info(f"Excel file already exists: shorts_data.xlsx")
-    
+
     # Create empty metrics files if they don't exist
     metrics_files = {
         "metadata_metrics.json": {
@@ -114,7 +122,7 @@ def setup_workspace(target_dir=None):
             "runs": []
         }
     }
-    
+
     for filename, default_content in metrics_files.items():
         file_path = os.path.join(target_dir, filename)
         if not os.path.exists(file_path):
@@ -123,19 +131,21 @@ def setup_workspace(target_dir=None):
             print_success(f"Created metrics file: {filename}")
         else:
             print_info(f"Metrics file already exists: {filename}")
-    
+
     print_success("Workspace setup complete!")
     print_info("Next steps:")
     print_info("1. Edit config.txt to add your API keys and customize settings")
     print_info("2. Edit niche.txt to set your target niche")
-    print_info("3. Run the scripts:")
+    print_info("3. Edit channels.txt to add YouTube channels (if using channel-based downloader)")
+    print_info("4. Run the scripts:")
     print_info("   - python -m youtube_shorts.performance_tracker")
     print_info("   - python -m youtube_shorts.downloader")
     print_info("   - python -m youtube_shorts.uploader")
     print_info("   Or use the command-line tools if installed as a package:")
-    print_info("   - yt-track")
-    print_info("   - yt-download")
-    print_info("   - yt-upload")
+    print_info("   - yt-track    # Run performance tracker")
+    print_info("   - yt-download # Run keyword-based downloader")
+    print_info("   - yt-channel  # Run channel-based downloader")
+    print_info("   - yt-upload   # Run uploader")
 
 def main():
     """Main function to run the setup script."""
@@ -143,7 +153,7 @@ def main():
     target_dir = None
     if len(sys.argv) > 1:
         target_dir = sys.argv[1]
-    
+
     setup_workspace(target_dir)
 
 if __name__ == "__main__":
