@@ -1,4 +1,0 @@
-[2025-04-27 20:02:21] ERROR: Authentication failed.
-[2025-04-27 20:02:21] ERROR: Could not authenticate with YouTube Data API. Exiting.
-[2025-04-27 20:02:41] ERROR: Authentication failed.
-[2025-04-27 20:02:41] ERROR: Could not authenticate with YouTube Data API. Exiting.

@@ -1,6 +1,0 @@
-[2025-04-23 15:29:40] ERROR: FATAL: Client secrets file not found at: C:\Users\SHAHID ALI\Desktop\GTA 6 YT Script - self improve test\youtube_shorts\client_secret.json
-[2025-04-23 15:29:40] ERROR: Please download 'client_secret.json' from Google Cloud Console and place it in the script directory.
-[2025-04-23 15:29:40] ERROR: Could not authenticate with YouTube Data API. Exiting.
-[2025-04-23 15:32:27] ERROR: FATAL: Client secrets file not found at: C:\Users\SHAHID ALI\Desktop\GTA 6 YT Script - self improve test\youtube_shorts\client_secret.json
-[2025-04-23 15:32:27] ERROR: Please download 'client_secret.json' from Google Cloud Console and place it in the script directory.
-[2025-04-23 15:32:27] ERROR: Could not authenticate with YouTube Data API. Exiting.
