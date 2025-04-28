@@ -1018,7 +1018,6 @@ if __name__ == "__main__":
         if max_downloads <= 0: print_fatal("MAX_DOWNLOADS must be a positive integer in 'config.txt'.")
 
         # Load keyword-based downloader settings from config
-        global YT_SEARCH_RESULTS_PER_KEYWORD, VIDEOS_TO_DOWNLOAD_PER_KEYWORD, KEYWORDS_TO_PROCESS_PER_RUN, MIN_KEYWORDS_THRESHOLD, NEW_KEYWORDS_TO_GENERATE
 
         # YT_SEARCH_RESULTS_PER_KEYWORD (Optional with Default)
         try: YT_SEARCH_RESULTS_PER_KEYWORD = int(config.get("YT_SEARCH_RESULTS_PER_KEYWORD", YT_SEARCH_RESULTS_PER_KEYWORD))
