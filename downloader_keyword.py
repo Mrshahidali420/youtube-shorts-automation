@@ -29,11 +29,19 @@ def print_fatal(msg, indent=0): prefix = "  " * indent; print(f"{prefix}{Back.RE
 
 # --- Constants ---
 # These constants will be overridden by config.txt values if available
-YT_SEARCH_RESULTS_PER_KEYWORD = 50 # Number of search results to fetch per keyword
-VIDEOS_TO_DOWNLOAD_PER_KEYWORD = 5  # Max videos to download for a single keyword
-KEYWORDS_TO_PROCESS_PER_RUN = 5  # Number of keywords to select for each run
-MIN_KEYWORDS_THRESHOLD = 20      # Minimum number of keywords before generating new ones
-NEW_KEYWORDS_TO_GENERATE = 10    # Number of new keywords to generate when needed
+# Default values
+_DEFAULT_YT_SEARCH_RESULTS = 50  # Number of search results to fetch per keyword
+_DEFAULT_VIDEOS_PER_KEYWORD = 5  # Max videos to download for a single keyword
+_DEFAULT_KEYWORDS_PER_RUN = 5    # Number of keywords to select for each run
+_DEFAULT_MIN_KEYWORDS = 20       # Minimum number of keywords before generating new ones
+_DEFAULT_NEW_KEYWORDS = 10       # Number of new keywords to generate when needed
+
+# Variables that will be set from config.txt or defaults
+YT_SEARCH_RESULTS_PER_KEYWORD = _DEFAULT_YT_SEARCH_RESULTS
+VIDEOS_TO_DOWNLOAD_PER_KEYWORD = _DEFAULT_VIDEOS_PER_KEYWORD
+KEYWORDS_TO_PROCESS_PER_RUN = _DEFAULT_KEYWORDS_PER_RUN
+MIN_KEYWORDS_THRESHOLD = _DEFAULT_MIN_KEYWORDS
+NEW_KEYWORDS_TO_GENERATE = _DEFAULT_NEW_KEYWORDS
 
 # Constants that don't change with config
 MAX_TITLE_LENGTH = 100             # YouTube's recommended max title length
@@ -1020,29 +1028,29 @@ if __name__ == "__main__":
         # Load keyword-based downloader settings from config
 
         # YT_SEARCH_RESULTS_PER_KEYWORD (Optional with Default)
-        try: YT_SEARCH_RESULTS_PER_KEYWORD = int(config.get("YT_SEARCH_RESULTS_PER_KEYWORD", YT_SEARCH_RESULTS_PER_KEYWORD))
-        except (ValueError, TypeError): print_warning(f"Invalid YT_SEARCH_RESULTS_PER_KEYWORD. Using default: {YT_SEARCH_RESULTS_PER_KEYWORD}")
-        if YT_SEARCH_RESULTS_PER_KEYWORD <= 0: YT_SEARCH_RESULTS_PER_KEYWORD = 50; print_warning(f"YT_SEARCH_RESULTS_PER_KEYWORD must be positive. Using default: 50")
+        try: YT_SEARCH_RESULTS_PER_KEYWORD = int(config.get("YT_SEARCH_RESULTS_PER_KEYWORD", _DEFAULT_YT_SEARCH_RESULTS))
+        except (ValueError, TypeError): print_warning(f"Invalid YT_SEARCH_RESULTS_PER_KEYWORD. Using default: {_DEFAULT_YT_SEARCH_RESULTS}")
+        if YT_SEARCH_RESULTS_PER_KEYWORD <= 0: YT_SEARCH_RESULTS_PER_KEYWORD = _DEFAULT_YT_SEARCH_RESULTS; print_warning(f"YT_SEARCH_RESULTS_PER_KEYWORD must be positive. Using default: {_DEFAULT_YT_SEARCH_RESULTS}")
 
         # VIDEOS_TO_DOWNLOAD_PER_KEYWORD (Optional with Default)
-        try: VIDEOS_TO_DOWNLOAD_PER_KEYWORD = int(config.get("VIDEOS_TO_DOWNLOAD_PER_KEYWORD", VIDEOS_TO_DOWNLOAD_PER_KEYWORD))
-        except (ValueError, TypeError): print_warning(f"Invalid VIDEOS_TO_DOWNLOAD_PER_KEYWORD. Using default: {VIDEOS_TO_DOWNLOAD_PER_KEYWORD}")
-        if VIDEOS_TO_DOWNLOAD_PER_KEYWORD <= 0: VIDEOS_TO_DOWNLOAD_PER_KEYWORD = 5; print_warning(f"VIDEOS_TO_DOWNLOAD_PER_KEYWORD must be positive. Using default: 5")
+        try: VIDEOS_TO_DOWNLOAD_PER_KEYWORD = int(config.get("VIDEOS_TO_DOWNLOAD_PER_KEYWORD", _DEFAULT_VIDEOS_PER_KEYWORD))
+        except (ValueError, TypeError): print_warning(f"Invalid VIDEOS_TO_DOWNLOAD_PER_KEYWORD. Using default: {_DEFAULT_VIDEOS_PER_KEYWORD}")
+        if VIDEOS_TO_DOWNLOAD_PER_KEYWORD <= 0: VIDEOS_TO_DOWNLOAD_PER_KEYWORD = _DEFAULT_VIDEOS_PER_KEYWORD; print_warning(f"VIDEOS_TO_DOWNLOAD_PER_KEYWORD must be positive. Using default: {_DEFAULT_VIDEOS_PER_KEYWORD}")
 
         # KEYWORDS_TO_PROCESS_PER_RUN (Optional with Default)
-        try: KEYWORDS_TO_PROCESS_PER_RUN = int(config.get("KEYWORDS_TO_PROCESS_PER_RUN", KEYWORDS_TO_PROCESS_PER_RUN))
-        except (ValueError, TypeError): print_warning(f"Invalid KEYWORDS_TO_PROCESS_PER_RUN. Using default: {KEYWORDS_TO_PROCESS_PER_RUN}")
-        if KEYWORDS_TO_PROCESS_PER_RUN <= 0: KEYWORDS_TO_PROCESS_PER_RUN = 5; print_warning(f"KEYWORDS_TO_PROCESS_PER_RUN must be positive. Using default: 5")
+        try: KEYWORDS_TO_PROCESS_PER_RUN = int(config.get("KEYWORDS_TO_PROCESS_PER_RUN", _DEFAULT_KEYWORDS_PER_RUN))
+        except (ValueError, TypeError): print_warning(f"Invalid KEYWORDS_TO_PROCESS_PER_RUN. Using default: {_DEFAULT_KEYWORDS_PER_RUN}")
+        if KEYWORDS_TO_PROCESS_PER_RUN <= 0: KEYWORDS_TO_PROCESS_PER_RUN = _DEFAULT_KEYWORDS_PER_RUN; print_warning(f"KEYWORDS_TO_PROCESS_PER_RUN must be positive. Using default: {_DEFAULT_KEYWORDS_PER_RUN}")
 
         # MIN_KEYWORDS_THRESHOLD (Optional with Default)
-        try: MIN_KEYWORDS_THRESHOLD = int(config.get("MIN_KEYWORDS_THRESHOLD", MIN_KEYWORDS_THRESHOLD))
-        except (ValueError, TypeError): print_warning(f"Invalid MIN_KEYWORDS_THRESHOLD. Using default: {MIN_KEYWORDS_THRESHOLD}")
-        if MIN_KEYWORDS_THRESHOLD <= 0: MIN_KEYWORDS_THRESHOLD = 20; print_warning(f"MIN_KEYWORDS_THRESHOLD must be positive. Using default: 20")
+        try: MIN_KEYWORDS_THRESHOLD = int(config.get("MIN_KEYWORDS_THRESHOLD", _DEFAULT_MIN_KEYWORDS))
+        except (ValueError, TypeError): print_warning(f"Invalid MIN_KEYWORDS_THRESHOLD. Using default: {_DEFAULT_MIN_KEYWORDS}")
+        if MIN_KEYWORDS_THRESHOLD <= 0: MIN_KEYWORDS_THRESHOLD = _DEFAULT_MIN_KEYWORDS; print_warning(f"MIN_KEYWORDS_THRESHOLD must be positive. Using default: {_DEFAULT_MIN_KEYWORDS}")
 
         # NEW_KEYWORDS_TO_GENERATE (Optional with Default)
-        try: NEW_KEYWORDS_TO_GENERATE = int(config.get("NEW_KEYWORDS_TO_GENERATE", NEW_KEYWORDS_TO_GENERATE))
-        except (ValueError, TypeError): print_warning(f"Invalid NEW_KEYWORDS_TO_GENERATE. Using default: {NEW_KEYWORDS_TO_GENERATE}")
-        if NEW_KEYWORDS_TO_GENERATE <= 0: NEW_KEYWORDS_TO_GENERATE = 10; print_warning(f"NEW_KEYWORDS_TO_GENERATE must be positive. Using default: 10")
+        try: NEW_KEYWORDS_TO_GENERATE = int(config.get("NEW_KEYWORDS_TO_GENERATE", _DEFAULT_NEW_KEYWORDS))
+        except (ValueError, TypeError): print_warning(f"Invalid NEW_KEYWORDS_TO_GENERATE. Using default: {_DEFAULT_NEW_KEYWORDS}")
+        if NEW_KEYWORDS_TO_GENERATE <= 0: NEW_KEYWORDS_TO_GENERATE = _DEFAULT_NEW_KEYWORDS; print_warning(f"NEW_KEYWORDS_TO_GENERATE must be positive. Using default: {_DEFAULT_NEW_KEYWORDS}")
 
         print(f"{Fore.BLUE}{Style.BRIGHT}Settings: Max Downloads={max_downloads}, Max Keywords={max_keywords}{Style.RESET_ALL}")
         print(f"{Fore.BLUE}Keyword Settings: Search Results={YT_SEARCH_RESULTS_PER_KEYWORD}, Keywords Per Run={KEYWORDS_TO_PROCESS_PER_RUN}, Videos Per Keyword={VIDEOS_TO_DOWNLOAD_PER_KEYWORD}{Style.RESET_ALL}")

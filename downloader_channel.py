@@ -1489,8 +1489,8 @@ def main():
                 if video_exists and metadata_exists: video_counter += 1; continue # Skip if both exist
                 elif video_exists and not metadata_exists: # Regenerate metadata if needed
                     print(f"  Video {video_file_name} exists, metadata missing. Regenerating...")
-                    # Use our improved metadata generation function
-                    seo_metadata = use_improved_metadata_generation(original_title, uploader, original_title)
+                    # Generate metadata with category suggestion
+                    seo_metadata = generate_metadata_with_timeout_v2(original_title, uploader, original_title)
                     generated_metadata = save_metadata_file(entry, video_counter, seo_metadata, channel_url)
                     if generated_metadata:
                         ts = generated_metadata.get("download_timestamp", datetime.now().isoformat()); views = generated_metadata.get('view_count', 0)
@@ -1518,8 +1518,8 @@ def main():
                 if download_success:
                     # --- Post-Download ---
                     print(f"  Download ok. Generating metadata...")
-                    # Use our improved metadata generation function
-                    seo_metadata = use_improved_metadata_generation(original_title, uploader, original_title)
+                    # Generate metadata with category suggestion
+                    seo_metadata = generate_metadata_with_timeout_v2(original_title, uploader, original_title)
                     generated_metadata = save_metadata_file(entry, video_counter, seo_metadata, channel_url)
                     if generated_metadata:
                         ts = generated_metadata.get("download_timestamp", datetime.now().isoformat()); views = generated_metadata.get('view_count', 0)
@@ -2285,20 +2285,6 @@ def generate_metadata_with_timeout_v2(video_title, uploader_name, original_title
             "tags": ["error"]
         }
 # --- End Enhanced Metadata Generation ---
-
-# --- Helper Function to Use Improved Metadata Generation ---
-def use_improved_metadata_generation(video_topic, uploader_name=DEFAULT_UPLOADER_NAME, original_title="Unknown Title"):
-    """Uses the improved metadata generation function instead of the old one."""
-    print_info(f"Using improved metadata generation for '{video_topic}'")
-    try:
-        return generate_metadata_with_timeout_v2(video_topic, uploader_name, original_title)
-    except Exception as e:
-        print_error(f"Error in improved metadata generation: {e}")
-        return {
-            "title": f"{video_topic[:80]} #Shorts",
-            "description": f"Error in improved function.\nCredit: {uploader_name}\nOriginal Title: {original_title}",
-            "tags": ["error"]
-        }
 
 if __name__ == "__main__":
     main()
