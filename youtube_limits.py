@@ -2,12 +2,12 @@
 
 # --- YouTube Limits Constants (Defaults) ---
 # These act as fallbacks if not provided by the calling script
-DEFAULT_YOUTUBE_DESCRIPTION_LIMIT = 4090
+DEFAULT_YOUTUBE_DESCRIPTION_LIMIT = 4950
 DEFAULT_YOUTUBE_TAG_LIMIT = 100
 
 # --- ADJUSTED LIMIT ---
-# Reduced slightly to account for potential discrepancies in YT's counting
-# Original was 470, try 460 first. If still over, try 450.
+# Now accounts for implicit quotes in tags with spaces
+# Original was 470, reduced to 450, now increased to 460 with improved counting
 DEFAULT_YOUTUBE_TOTAL_TAGS_LIMIT = 460
 # --- END ADJUSTED LIMIT ---
 
@@ -66,6 +66,10 @@ def validate_tags(
 ) -> tuple[list[str], list[str]]:
     """
     Validates and optimizes a list of tags to meet YouTube's limits.
+
+    Accounts for implicit quotes that YouTube adds to tags with spaces when calculating
+    the total character limit. For each tag with spaces, adds 2 characters to the effective
+    length to represent the quotes.
 
     Args:
         tags: A list of tag strings.
@@ -131,18 +135,23 @@ def validate_tags(
             tag = tag[:tag_char_limit].strip() # Truncate and strip again
             warnings.append(f"Tag {original_tag_repr} truncated to '{tag}' (>{tag_char_limit} chars).")
 
-        current_tag_len = len(tag)
+        current_tag_len_raw = len(tag) # Raw length of the (potentially truncated) tag
         # Skip if tag became empty after truncation/stripping
-        if current_tag_len == 0: continue
+        if current_tag_len_raw == 0: continue
 
         # Re-check for duplicates after potential truncation
         if tag in processed_tags:
             continue
 
-        # 2c. Check Total Character Count (using the standard calculation for now)
+        # --- Calculate effective length for total limit ---
+        # Add 2 characters for quotes if the tag contains a space
+        effective_tag_len = current_tag_len_raw + 2 if ' ' in tag else current_tag_len_raw
+        # --- End effective length calculation ---
+
+        # 2c. Check Total Character Count (using the effective length calculation)
         # This calculation assumes a comma separator between tags.
         separator_len = 1 if valid_tags else 0 # Add 1 char for comma AFTER the first tag
-        prospective_total = total_chars + current_tag_len + separator_len
+        prospective_total = total_chars + effective_tag_len + separator_len
 
         if prospective_total > total_char_limit: # Use the potentially reduced limit
             if not limits_hit: warnings.append(f"Total tag char limit (~{total_char_limit}) reached. Remaining tags skipped.")
@@ -152,15 +161,15 @@ def validate_tags(
         # --- Add the tag ---
         valid_tags.append(tag)
         processed_tags.add(tag) # Mark as processed
-        total_chars = prospective_total # Update total chars correctly
+        total_chars = prospective_total # Update total chars with the effective length + separator
         tag_count += 1
 
     # --- End Applying Limits ---
 
     if limits_hit:
-        print(f"[youtube_limits] Validation resulted in {len(valid_tags)} tags, {total_chars} total chars (approx). Limits enforced.")
+        print(f"[youtube_limits] Validation resulted in {len(valid_tags)} tags, {total_chars} total effective chars (including implicit quotes). Limits enforced.")
     else:
-        print(f"[youtube_limits] Validation resulted in {len(valid_tags)} tags, {total_chars} total chars (approx). No limits hit.")
+        print(f"[youtube_limits] Validation resulted in {len(valid_tags)} tags, {total_chars} total effective chars (including implicit quotes). No limits hit.")
 
 
     return valid_tags, warnings
