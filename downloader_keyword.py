@@ -11,6 +11,7 @@ import random
 import math
 import time
 import traceback
+import collections # For word counting in metadata validation
 import colorama # Import colorama
 from colorama import Fore, Style, Back # Import specific styles
 import shutil # For file backups
@@ -69,6 +70,7 @@ TOP_KEYWORDS_TO_USE = 5          # Number of top-performing keywords to use for 
 # Metadata prompt improvement settings
 METADATA_ERROR_THRESHOLD = 0.15  # Error rate threshold to trigger prompt improvement (15%)
 METADATA_TIMEOUT_THRESHOLD = 0.10 # Timeout rate threshold to trigger prompt improvement (10%)
+VALIDATION_WARNING_THRESHOLD = 0.20 # Validation warning threshold to trigger prompt improvement (20%)
 MAX_ERROR_SAMPLES = 5            # Maximum number of error samples to store for prompt improvement
 
 # Parameter tuning settings
@@ -181,12 +183,17 @@ def generate_keywords_from_niche(seed_niche, num_keywords=10, top_performing_key
         return []
 
 # --- Metadata Validation ---
-def validate_generated_metadata(metadata, video_title):
-    """Performs cross-validation checks on generated metadata."""
+def validate_generated_metadata(metadata, video_title, metadata_metrics=None):
+    """Performs cross-validation checks on generated metadata and updates metrics."""
     warnings = []
     title = metadata.get("title", "")
     description = metadata.get("description", "")
     tags = metadata.get("tags", [])
+
+    # Flags to track specific validation issues (to only increment metrics once per validation)
+    title_mismatch_detected = False
+    tag_list_error_detected = False
+    stuffing_detected = False
 
     if not title: warnings.append("Generated title is empty.")
     if not description: warnings.append("Generated description is empty.")
@@ -197,9 +204,13 @@ def validate_generated_metadata(metadata, video_title):
     title_base = title.replace("#Shorts", "").strip().lower()
     if title_base and title_base not in description.lower():
         warnings.append(f"Generated title base ('{title_base[:50]}...') not found in description.")
+        if metadata_metrics and not title_mismatch_detected:
+            metadata_metrics["validation_title_mismatches"] += 1
+            title_mismatch_detected = True
 
     # 2. Tags mentioned in Description
     tags_in_desc_heading = "Tags Used in Video :-"
+    tags_listed_incorrectly = False
     if tags_in_desc_heading.lower() in description.lower():
         try:
             # Find text after heading, split by comma/newline, strip whitespace
@@ -213,24 +224,40 @@ def validate_generated_metadata(metadata, video_title):
                 missing_in_desc = tags_generated_lower - tags_mentioned_in_desc
                 extra_in_desc = tags_mentioned_in_desc - tags_generated_lower
 
-                if missing_in_desc: warnings.append(f"Tags listed in <tags> but missing under description heading: {missing_in_desc}")
-                if extra_in_desc: warnings.append(f"Tags mentioned under description heading but not in <tags>: {extra_in_desc}")
+                if missing_in_desc:
+                    warnings.append(f"Tags listed in <tags> but missing under description heading: {missing_in_desc}")
+                    tags_listed_incorrectly = True
+                if extra_in_desc:
+                    warnings.append(f"Tags mentioned under description heading but not in <tags>: {extra_in_desc}")
+                    tags_listed_incorrectly = True
         except Exception as e:
             warnings.append(f"Error parsing tags from description: {e}")
+            tags_listed_incorrectly = True
     else:
         warnings.append(f"'{tags_in_desc_heading}' heading not found in description.")
+        tags_listed_incorrectly = True
+
+    if tags_listed_incorrectly and metadata_metrics and not tag_list_error_detected:
+        metadata_metrics["validation_tag_list_errors"] += 1
+        tag_list_error_detected = True
 
     # 3. Keyword Stuffing (Simple Heuristic)
     words_in_desc = description.lower().split()
     if tags and words_in_desc:
-        max_tag_word_occurrences = 5 # Configurable threshold
+        max_tag_word_occurrences = 7 # Configurable threshold
+        # Use Counter for more efficient word counting
+        word_counts = collections.Counter(words_in_desc)
+
         for tag in tags:
             tag_words = tag.lower().split()
             for tag_word in tag_words:
                 if len(tag_word) > 3: # Only check meaningful words
-                    count = words_in_desc.count(tag_word)
+                    count = word_counts.get(tag_word, 0)
                     if count > max_tag_word_occurrences:
                         warnings.append(f"Potential keyword stuffing: Word '{tag_word}' (from tag '{tag}') appears {count} times in description.")
+                        if metadata_metrics and not stuffing_detected:
+                            metadata_metrics["validation_keyword_stuffing"] += 1
+                            stuffing_detected = True
                         break # Only report once per tag
 
     if warnings:
@@ -260,7 +287,21 @@ def improve_metadata_prompt(error_metrics):
     for error_type in ["parse_failures", "timeouts", "empty_description_errors", "empty_tags_errors"]:
         count = error_metrics.get(error_type, 0)
         rate = count / total_calls if total_calls > 0 else 0
-        error_summary.append(f"{error_type}: {count} ({rate:.1%})")
+        # Clarify metric name in summary
+        metric_name = error_type.replace("_", " ").title()
+        error_summary.append(f"{metric_name}: {count} ({rate:.1%})")
+
+    # Add validation warning metrics
+    validation_summary = []
+    for warning_type in ["validation_title_mismatches", "validation_tag_list_errors", "validation_keyword_stuffing"]:
+        count = error_metrics.get(warning_type, 0)
+        rate = count / total_calls if total_calls > 0 else 0
+        # Clarify metric name in summary
+        metric_name = warning_type.replace("validation_", "").replace("_", " ").title()
+        validation_summary.append(f"{metric_name}: {count} ({rate:.1%})")
+
+    error_summary.append("\n=== Validation Warnings ===")
+    error_summary.extend(validation_summary)
 
     error_samples = error_metrics.get("error_samples", [])
     if error_samples:
@@ -269,7 +310,7 @@ def improve_metadata_prompt(error_metrics):
             error_summary.append(f"Sample {i}: {sample.get('type')} - {sample.get('details')}")
     error_summary_text = "\n".join(error_summary)
 
-    # *** ADJUSTED META-PROMPT FOR SEO CONTEXT ***
+    # *** ADJUSTED META-PROMPT FOR SEO CONTEXT WITH VALIDATION WARNINGS ***
     meta_prompt = f"""
     Review the following prompt used to generate SEO-optimized YouTube Shorts metadata:
 
@@ -277,19 +318,23 @@ def improve_metadata_prompt(error_metrics):
     {current_prompt}
     ```
 
-    Based on the following issues observed:
+    Based on the following issues observed (metrics over multiple runs):
 
     {error_summary_text}
 
-    Please provide an improved version of the SEO metadata generation prompt. Focus on clarity and robustness to avoid these specific problems, especially parsing failures and empty results. The prompt should:
+    Please provide an improved version of the SEO metadata generation prompt. Focus on clarity, robustness, and addressing the specific issues indicated by the metrics. The improved prompt should instruct the metadata generation model to:
 
-    1.  Be absolutely explicit about the required XML structure (`<metadata>`, `<title>`, `<description>`, `<tags>`) and that *only* this structure should be output.
-    2.  Reinforce the instructions for generating SEO-focused titles, detailed descriptions (including keywords, structure, credits, disclaimers, hashtags), and comprehensive tag lists.
-    3.  Ensure the instructions for description elements (like credits, original title placeholders) are crystal clear to minimize omissions.
-    4.  Maintain the overall goal of SEO optimization for discoverability.
-    5.  Perhaps add an instruction to double-check that all requested elements (title, description, tags) are included within their respective XML tags before finishing.
+    1.  Adhere strictly to the requested XML structure (`<metadata>`, `<title>`, `<description>`, `<tags>`) and output *only* this structure.
+    2.  Generate SEO-focused titles, descriptions, and tags.
+    3.  Use keywords **naturally** within the description. **Explicitly instruct the model to avoid excessive repetition of the same keywords or phrases.** Aim for readability and value over simple repetition.
+    4.  Ensure the title is properly reflected in the description content (to prevent title mismatches).
+    5.  Provide clear instructions for including all tags in the "Tags Used in Video :-" section of the description, ensuring the tag list in the description matches exactly with the tags in the <tags> section.
+    6.  Ensure all specific elements requested within the description (e.g., title inclusion, credit, disclaimer, tags list, CTA) are present and correctly formatted.
+    7.  Generate comprehensive and relevant tag lists.
+    8.  Minimize parsing failures and the generation of empty/incomplete `<title>`, `<description>`, or `<tags>` elements.
+    9.  Add a final self-check step within the prompt for the model to verify all elements are present and constraints (like keyword usage) are met before outputting.
 
-    Provide ONLY the new prompt text, without any explanations or additional text.
+    Provide ONLY the improved prompt text, without any explanations or additional text.
     """
 
     try:
@@ -612,10 +657,9 @@ def generate_metadata_with_timeout(video_title, uploader_name, original_title="U
             if error_type and error_details:
                 add_error_sample(metadata_metrics, error_type, error_details, video_title)
 
-            # --->>> ADD VALIDATION CALL HERE <<<---
+            # Validate metadata and track stuffing warnings
             if result_metadata: # Only validate if we have metadata
-                validate_generated_metadata(result_metadata, video_title)
-            # --->>> END VALIDATION CALL <<<---
+                validate_generated_metadata(result_metadata, video_title, metadata_metrics)
 
             save_metadata_metrics(metadata_metrics) # Save after checking result
             return result_metadata # Return the metadata dict (potentially with suggested_category)
@@ -641,9 +685,8 @@ def generate_metadata_with_timeout(video_title, uploader_name, original_title="U
             # No 'suggested_category' in timeout fallback
         }
 
-        # --->>> ADD VALIDATION CALL HERE <<<---
-        validate_generated_metadata(fallback_metadata, video_title)
-        # --->>> END VALIDATION CALL <<<---
+        # Validate metadata and track stuffing warnings
+        validate_generated_metadata(fallback_metadata, video_title, metadata_metrics)
 
         save_metadata_metrics(metadata_metrics)
         return fallback_metadata
@@ -668,9 +711,8 @@ def generate_metadata_with_timeout(video_title, uploader_name, original_title="U
             # No 'suggested_category' in exception fallback
         }
 
-        # --->>> ADD VALIDATION CALL HERE <<<---
-        validate_generated_metadata(fallback_metadata, video_title)
-        # --->>> END VALIDATION CALL <<<---
+        # Validate metadata and track stuffing warnings
+        validate_generated_metadata(fallback_metadata, video_title, metadata_metrics)
 
         save_metadata_metrics(metadata_metrics)
         return fallback_metadata
@@ -722,10 +764,12 @@ def improve_metadata_prompt(error_metrics):
 
     error_summary = [f"Total API calls: {total_calls}"]
     # Calculate error rates for relevant metrics
-    for error_type in ["parse_failures", "timeouts", "empty_description_errors", "empty_tags_errors"]:
+    for error_type in ["parse_failures", "timeouts", "empty_description_errors", "empty_tags_errors", "keyword_stuffing_warnings"]:
         count = error_metrics.get(error_type, 0)
         rate = count / total_calls if total_calls > 0 else 0
-        error_summary.append(f"{error_type}: {count} ({rate:.1%})")
+        # Clarify metric name in summary
+        metric_name = error_type.replace("_", " ").title()
+        error_summary.append(f"{metric_name}: {count} ({rate:.1%})")
 
     error_samples = error_metrics.get("error_samples", [])
     if error_samples:
@@ -746,13 +790,14 @@ def improve_metadata_prompt(error_metrics):
 
     {error_summary_text}
 
-    Please provide an improved version of the SEO metadata generation prompt. Focus on clarity and robustness to avoid these specific problems, especially parsing failures and empty results. The prompt should:
+    Please provide an improved version of the SEO metadata generation prompt. Focus on clarity and robustness to avoid these specific problems, especially parsing failures, empty results, and keyword stuffing. The prompt should:
 
     1.  Be absolutely explicit about the required XML structure (`<metadata>`, `<title>`, `<description>`, `<tags>`) and that *only* this structure should be output.
-    2.  Reinforce the instructions for generating SEO-focused titles, detailed descriptions (including keywords, structure, credits, disclaimers, hashtags), and comprehensive tag lists.
-    3.  Ensure the instructions for description elements (like credits, original title placeholders) are crystal clear to minimize omissions.
-    4.  Maintain the overall goal of SEO optimization for discoverability.
-    5.  Perhaps add an instruction to double-check that all requested elements (title, description, tags) are included within their respective XML tags before finishing.
+    2.  Reinforce the instructions for generating SEO-focused titles, detailed descriptions (including keywords used *naturally*, structure, credits, disclaimers, hashtags), and comprehensive tag lists.
+    3.  Instruct the model to avoid excessive repetition of the same keywords within the description.
+    4.  Ensure the instructions for description elements (like credits, original title placeholders) are crystal clear to minimize omissions.
+    5.  Maintain the overall goal of SEO optimization for discoverability.
+    6.  Perhaps add an instruction to double-check that all requested elements (title, description, tags) are included within their respective XML tags before finishing.
 
     Provide ONLY the new prompt text, without any explanations or additional text.
     """
@@ -886,6 +931,18 @@ def generate_performance_summary(metrics):
     summary.append(f"Total metadata API calls: {metrics.get('total_metadata_api_calls', 0)}")
     summary.append(f"Total metadata errors: {metrics.get('total_metadata_errors', 0)}")
     summary.append(f"Overall Metadata error rate: {metrics.get('total_metadata_errors', 0) / max(1, metrics.get('total_metadata_api_calls', 1)):.1%}")
+
+    # Add specific metadata errors/warnings
+    metadata_metrics = load_metadata_metrics() # Load the detailed metrics
+    summary.append(f"  Parse Failures: {metadata_metrics.get('parse_failures', 0)}")
+    summary.append(f"  Timeouts: {metadata_metrics.get('timeouts', 0)}")
+    summary.append(f"  Empty Descriptions: {metadata_metrics.get('empty_description_errors', 0)}")
+    summary.append(f"  Empty Tags: {metadata_metrics.get('empty_tags_errors', 0)}")
+    # Add specific validation warnings
+    summary.append(f"  Validation - Title Mismatches: {metadata_metrics.get('validation_title_mismatches', 0)}")
+    summary.append(f"  Validation - Tag List Errors: {metadata_metrics.get('validation_tag_list_errors', 0)}")
+    summary.append(f"  Validation - Keyword Stuffing: {metadata_metrics.get('validation_keyword_stuffing', 0)}")
+
     if runs_data:
         summary.append(f"\n=== Recent Runs ({min(5, len(runs_data))}) ===")
         for run in runs_data[-5:]:
@@ -1051,7 +1108,16 @@ def generate_tuning_suggestions(metrics, config):
 def load_metadata_metrics():
     """Loads metadata metrics from the JSON file."""
     metrics_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), METADATA_METRICS_FILENAME)
-    default_metrics = { "total_api_calls": 0, "parse_failures": 0, "timeouts": 0, "empty_title_errors": 0, "empty_description_errors": 0, "empty_tags_errors": 0, "last_run_date": datetime.now().isoformat(), "error_samples": [], "total_api_calls_previous": 0, "total_errors_previous": 0 } # Added history tracking
+    default_metrics = {
+        "total_api_calls": 0, "parse_failures": 0, "timeouts": 0,
+        "empty_title_errors": 0, "empty_description_errors": 0, "empty_tags_errors": 0,
+        # Validation warning metrics
+        "validation_title_mismatches": 0,
+        "validation_tag_list_errors": 0,
+        "validation_keyword_stuffing": 0,
+        "last_run_date": datetime.now().isoformat(), "error_samples": [],
+        "total_api_calls_previous": 0, "total_errors_previous": 0
+    } # Added history tracking
     try:
         if os.path.exists(metrics_file_path):
             with open(metrics_file_path, "r", encoding="utf-8") as f: metrics = json.load(f)
@@ -1534,12 +1600,53 @@ if __name__ == "__main__":
         metadata_metrics = load_metadata_metrics()
         total_api_calls = metadata_metrics.get("total_api_calls", 0)
         if total_api_calls > 0:
-            total_errors = sum(metadata_metrics.get(err_type, 0) for err_type in ["parse_failures", "empty_description_errors", "empty_tags_errors"]) # Focus on content errors for SEO prompt
-            timeouts = metadata_metrics.get("timeouts", 0)
-            error_rate = total_errors / total_api_calls; timeout_rate = timeouts / total_api_calls
-            print_info(f"Metadata API calls: {total_api_calls}, Content Errors: {total_errors} ({error_rate:.1%}), Timeouts: {timeouts} ({timeout_rate:.1%})")
-            if error_rate >= METADATA_ERROR_THRESHOLD or timeout_rate >= METADATA_TIMEOUT_THRESHOLD:
-                print_warning(f"Metadata error rate ({error_rate:.1%}) or timeout rate ({timeout_rate:.1%}) exceeds threshold. Attempting to improve prompt...", 1)
+            # Calculate rates for all relevant error types
+            parse_fail_rate = metadata_metrics.get("parse_failures", 0) / total_api_calls
+            timeout_rate = metadata_metrics.get("timeouts", 0) / total_api_calls
+            empty_desc_rate = metadata_metrics.get("empty_description_errors", 0) / total_api_calls
+            empty_tags_rate = metadata_metrics.get("empty_tags_errors", 0) / total_api_calls
+
+            # Calculate validation warning rates
+            title_mismatch_rate = metadata_metrics.get("validation_title_mismatches", 0) / total_api_calls
+            tag_list_error_rate = metadata_metrics.get("validation_tag_list_errors", 0) / total_api_calls
+            stuffing_rate = metadata_metrics.get("validation_keyword_stuffing", 0) / total_api_calls
+
+            # Calculate total content errors (for backward compatibility)
+            total_errors = sum(metadata_metrics.get(err_type, 0) for err_type in ["parse_failures", "empty_description_errors", "empty_tags_errors"])
+            error_rate = total_errors / total_api_calls
+
+            print_info(f"Metadata API calls: {total_api_calls}, Content Errors: {total_errors} ({error_rate:.1%}), Timeouts: {timeout_rate:.1%}")
+            print_info(f"Validation Warnings - Title Mismatches: {title_mismatch_rate:.1%}, Tag List Errors: {tag_list_error_rate:.1%}, Keyword Stuffing: {stuffing_rate:.1%}")
+
+            # Determine if we need to improve the prompt
+            trigger_improvement = False
+            reason = ""
+
+            if parse_fail_rate >= METADATA_ERROR_THRESHOLD:
+                trigger_improvement = True
+                reason = "Parse Failures"
+            elif timeout_rate >= METADATA_TIMEOUT_THRESHOLD:
+                trigger_improvement = True
+                reason = "Timeouts"
+            elif empty_desc_rate >= METADATA_ERROR_THRESHOLD:
+                trigger_improvement = True
+                reason = "Empty Descriptions"
+            elif empty_tags_rate >= METADATA_ERROR_THRESHOLD:
+                trigger_improvement = True
+                reason = "Empty Tags"
+            # Check validation warning rates
+            elif title_mismatch_rate >= VALIDATION_WARNING_THRESHOLD:
+                trigger_improvement = True
+                reason = "Title Mismatches"
+            elif tag_list_error_rate >= VALIDATION_WARNING_THRESHOLD:
+                trigger_improvement = True
+                reason = "Tag List Errors"
+            elif stuffing_rate >= VALIDATION_WARNING_THRESHOLD:
+                trigger_improvement = True
+                reason = "Keyword Stuffing"
+
+            if trigger_improvement:
+                print_warning(f"Metadata quality issue detected (Reason: {reason} rate above threshold). Attempting to improve prompt...", 1)
                 # Backup current prompt (cache or default)
                 current_prompt_text = load_or_get_seo_prompt_template()
                 backup_file_path = SEO_METADATA_PROMPT_CACHE_PATH + ".backup"
@@ -1551,7 +1658,7 @@ if __name__ == "__main__":
                 improved_prompt = improve_metadata_prompt(metadata_metrics)
                 if improved_prompt: save_seo_prompt_template(improved_prompt) # Save to cache file
                 else: print_warning("Could not generate an improved prompt. Keeping current version.", 2)
-            else: print_success("Metadata prompt is performing well based on error rates.")
+            else: print_success("Metadata prompt is performing well based on error rates and validation warnings.")
         else: print_info("No metadata API calls recorded yet. Skipping prompt quality check.")
 
         # --- Main Download Loop ---
