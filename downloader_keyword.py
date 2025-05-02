@@ -53,6 +53,9 @@ FFMPEG_EXE = "ffmpeg.exe" # Assuming it's in the script directory or PATH
 SHORTS_SUFFIX = " #Shorts"
 MAX_SHORT_DURATION = 61 # Max duration in seconds for a video to be considered a Short
 
+# --- Playlist Management Constants ---
+PLAYLIST_DATA_CACHE_FILENAME = "playlists_data_cache.json" # Stores {id: title} for existing, {title_suggestion: None} for new
+
 # --- Self-Improvement Constants ---
 # **Note:** METADATA_PROMPT_FILENAME is REMOVED as the prompt is now inline (SEO strategy)
 SEO_METADATA_PROMPT_CACHE = "seo_metadata_prompt.txt" # Optional: Cache the potentially AI-improved SEO prompt
@@ -83,6 +86,256 @@ _current_seo_prompt_template = None # Will be loaded/set later
 
 
 # --- Function Definitions ---
+
+# --- Cache Functions ---
+def load_cache(cache_file_path, cache_name="Cache"):
+    """Loads a cache from a JSON file."""
+    default_cache = {"timestamp": datetime.now().isoformat()}
+    try:
+        if os.path.exists(cache_file_path):
+            with open(cache_file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+                if not content:
+                    print_info(f"{cache_name} file exists but is empty. Initializing new cache.")
+                    return default_cache
+                cache = json.loads(content)
+                if not isinstance(cache, dict):
+                    print_warning(f"{cache_name} file has invalid format (expected dict). Initializing new cache.")
+                    return default_cache
+                return cache
+        else:
+            print_info(f"{cache_name} file not found. Creating new cache.")
+            return default_cache
+    except json.JSONDecodeError:
+        print_error(f"Error decoding JSON from {cache_name} file. Initializing new cache.")
+        return default_cache
+    except Exception as e:
+        print_error(f"Error loading {cache_name}: {e}", include_traceback=True)
+        return default_cache
+
+# --- Playlist Management Functions ---
+def get_playlist_suggestion(video_title: str, video_desc: str, video_tags: list, existing_playlist_titles: list) -> str:
+    """Asks Gemini to match video to an existing playlist or suggest a new one."""
+    print_info("Getting playlist suggestion from Gemini...", 3)
+
+    existing_playlists_formatted = "\n - ".join(existing_playlist_titles) if existing_playlist_titles else "None"
+
+    prompt = f"""
+    Analyze the following YouTube Short video's metadata:
+    Title: {video_title}
+    Description: {video_desc[:500]} # Limit description for prompt
+    Tags: {', '.join(video_tags[:15])} # Limit tags for prompt
+
+    Here is a list of EXISTING YouTube playlists on the channel:
+     - {existing_playlists_formatted}
+
+    Your task is to determine the BEST playlist for this video. **Prioritize matching an existing playlist if possible.**
+
+    1.  **Check Existing:** Review the list of EXISTING playlists. Does the video's core topic (derived from title, description, tags) closely match the theme of ANY of the existing playlists? Be flexible with minor wording differences (e.g., "GTA 6 Leaks" vs "GTA VI Leaks").
+    2.  **Decision:**
+        *   If YES, and you find a strong thematic match, output the EXACT name of the single best matching EXISTING playlist from the list provided. **Do this even if the match isn't perfect but is reasonably close.**
+        *   If NO (no reasonable match found, or the existing list is 'None'), ONLY THEN suggest a SHORT, relevant, and SEO-friendly NEW playlist title (max 60 characters) that accurately reflects the video's specific topic. Prefix the suggestion with "NEW: ". Example: "NEW: GTA V Funny Moments" or "NEW: Vice City Secrets".
+
+    Output ONLY the chosen existing playlist title OR the "NEW: " prefixed suggestion. Do not add any other explanation.
+    """
+
+    try:
+        model = genai.GenerativeModel("gemini-1.5-flash")
+        response = model.generate_content(prompt)
+        suggestion = response.text.strip()
+
+        if suggestion:
+            if suggestion.startswith("NEW: "):
+                new_title = suggestion[len("NEW: "):].strip()
+                if new_title:
+                    print_success(f"Gemini suggested NEW playlist: '{new_title}'", 4)
+                    return suggestion # Return with "NEW: " prefix
+                else:
+                    print_warning("Gemini suggested 'NEW: ' but title was empty.", 4)
+                    return None
+            elif suggestion in existing_playlist_titles:
+                print_success(f"Gemini matched to EXISTING playlist: '{suggestion}'", 4)
+                return suggestion # Return the exact existing title
+            else:
+                print_warning(f"Gemini output '{suggestion}' doesn't match existing or NEW format. Treating as NEW suggestion.", 4)
+                # Fallback: Treat unexpected output as a new suggestion if it's not empty
+                return f"NEW: {suggestion[:60]}" # Add prefix and limit length
+
+        else:
+            print_warning("Gemini returned empty playlist suggestion.", 4)
+            return None
+
+    except Exception as e:
+        print_error(f"Error getting playlist suggestion from Gemini: {e}", 3)
+        return None
+
+def get_authenticated_service():
+    """Gets an authenticated YouTube Data API service."""
+    try:
+        import pickle
+        from google_auth_oauthlib.flow import InstalledAppFlow
+        from google.auth.transport.requests import Request
+        from googleapiclient.discovery import build
+    except ImportError:
+        print_error("Google API libraries not available. Install with: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib")
+        return None
+
+    # Define constants for authentication
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    CLIENT_SECRETS_FILE = os.path.join(script_dir, "client_secret.json")
+    TOKEN_FILE = os.path.join(script_dir, "token.json")
+    # Include playlist management scope in addition to readonly
+    SCOPES = [
+        "https://www.googleapis.com/auth/youtube.readonly",
+        "https://www.googleapis.com/auth/youtube" # Full access for playlist management
+    ]
+
+    creds = None
+    if os.path.exists(TOKEN_FILE):
+        try:
+            with open(TOKEN_FILE, 'rb') as token:
+                creds = pickle.load(token)
+            print_success("Cached credentials loaded.")
+        except Exception as e:
+            print_warning(f"Failed to load cached credentials: {e}. Will re-authenticate.")
+            creds = None
+
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            try:
+                creds.refresh(Request())
+                print_success("Credentials refreshed successfully.")
+            except Exception as e:
+                print_warning(f"Failed to refresh credentials: {e}. Will perform new auth.")
+                creds = None
+        else:
+            print_info("No valid cached credentials. Starting new authentication flow.")
+            if not os.path.exists(CLIENT_SECRETS_FILE):
+                print_error(f"FATAL: Client secrets file not found: {CLIENT_SECRETS_FILE}")
+                return None
+            try:
+                flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS_FILE, SCOPES)
+                creds = flow.run_local_server(port=0)
+                print_success("Authentication flow completed.")
+            except Exception as e:
+                print_error(f"Auth flow error: {e}", include_traceback=True)
+                return None
+
+        if creds and creds.valid:
+            try:
+                with open(TOKEN_FILE, 'wb') as token:
+                    pickle.dump(creds, token)
+                print_success(f"Credentials saved to: {TOKEN_FILE}")
+            except Exception as e:
+                print_warning(f"Failed to save credentials: {e}")
+
+    if creds and creds.valid:
+        try:
+            service = build('youtube', 'v3', credentials=creds)
+            print_success("YouTube Data API service built.")
+            return service
+        except Exception as e:
+            print_error(f"API service build error: {e}", include_traceback=True)
+            return None
+    else:
+        print_error("Authentication failed.")
+        return None
+
+def fetch_channel_playlists(service) -> dict:
+    """Fetches existing public playlists for the authenticated user's channel."""
+    if not service:
+        print_warning("YouTube API service not available, cannot fetch playlists.")
+        return {}
+
+    playlists_map = {}
+    next_page_token = None
+    print_info("Fetching existing channel playlists via YouTube API...")
+    try:
+        while True:
+            request = service.playlists().list(
+                part="snippet",
+                mine=True, # Get playlists for the authenticated user
+                maxResults=50,
+                pageToken=next_page_token
+            )
+            response = request.execute()
+
+            for item in response.get("items", []):
+                playlist_id = item.get("id")
+                playlist_title = item.get("snippet", {}).get("title")
+                if playlist_id and playlist_title:
+                    playlists_map[playlist_id] = playlist_title
+
+            next_page_token = response.get("nextPageToken")
+            if not next_page_token:
+                break # Exit loop if no more pages
+            time.sleep(0.5) # Avoid hitting API limits too quickly
+
+        print_success(f"Fetched {len(playlists_map)} existing playlists.")
+        return playlists_map
+
+    except Exception as e:
+        print_error(f"Error fetching playlists: {e}", include_traceback=True)
+        return playlists_map # Return what we got so far
+
+def create_playlist(service, title: str, description: str = "") -> str:
+    """Creates a new private playlist and returns its ID."""
+    if not service or not title:
+        print_warning("Missing service or title for creating playlist.")
+        return None
+
+    print_info(f"Attempting to create new playlist via API: '{title}'", 3)
+    try:
+        request = service.playlists().insert(
+            part="snippet,status",
+            body={
+              "snippet": {
+                "title": title,
+                "description": description,
+                "defaultLanguage": "en" # Optional: set language
+              },
+              "status": {
+                "privacyStatus": "private" # Or "public", "unlisted"
+              }
+            }
+        )
+        response = request.execute()
+        playlist_id = response.get("id")
+        if playlist_id:
+            print_success(f"Successfully created playlist '{title}' with ID: {playlist_id}", 4)
+            return playlist_id
+        else:
+            print_error(f"Failed to create playlist '{title}'. No ID returned.", 4)
+            return None
+    except Exception as e:
+         print_error(f"Error creating playlist '{title}': {e}", 4, include_traceback=True)
+         return None
+
+def add_video_to_playlist(service, video_id: str, playlist_id: str) -> bool:
+    """Adds a video to a specified playlist using YouTube Data API."""
+    if not service or not video_id or not playlist_id:
+        print_warning("Missing service, video ID, or playlist ID for adding to playlist.")
+        return False
+    try:
+        request = service.playlistItems().insert(
+            part="snippet",
+            body={
+                "snippet": {
+                    "playlistId": playlist_id,
+                    "resourceId": {
+                        "kind": "youtube#video",
+                        "videoId": video_id
+                    }
+                    # Optional: Set position 'position': 0 # Add to top
+                }
+            }
+        )
+        response = request.execute()
+        print_success(f"Successfully added video {video_id} to playlist {playlist_id}.", 4)
+        return True
+    except Exception as e:
+        print_error(f"Error adding video {video_id} to playlist {playlist_id}: {e}", 4, include_traceback=True)
+        return False
 
 # --- Correlation Cache Functions ---
 def load_correlation_cache():
@@ -1166,7 +1419,8 @@ def save_metadata(entry, video_index, seo_metadata, metadata_folder_path, curren
         "video_index": f"video{video_index}", # Internal index for correlation
         "discovery_keyword": current_keyword, # Keyword that found this video
         "original_yt_id_at_download": video_id, # Explicitly store original ID
-        "suggested_category": seo_metadata.get("suggested_category") # Will be None if not generated
+        "suggested_category": seo_metadata.get("suggested_category"), # Will be None if not generated
+        "target_playlist": seo_metadata.get("target_playlist") # Playlist ID or NEW suggestion
     }
     metadata_file_name = f"video{video_index}.json"
     metadata_file_path = os.path.join(metadata_folder_path, metadata_file_name)
@@ -1201,12 +1455,18 @@ def get_last_video_index(excel_file_path, sheet_name):
              except: pass
         print_error(f"Error reading last video index from '{excel_file_path}', sheet '{sheet_name}': {e}. Starting video index at 1.", 1); return 1
 
-# --- save_cache (Unchanged) ---
-def save_cache(cache_data, cache_file_path):
+# --- save_cache (Updated to handle both list and dict with optional name) ---
+def save_cache(cache_data, cache_file_path, cache_name="Cache"):
     """Saves cache data (list or dict) to a JSON file."""
     try:
         with open(cache_file_path, "w", encoding="utf-8") as f: json.dump(cache_data, f, ensure_ascii=False, indent=4)
-    except Exception as e: print_error(f"Error saving cache to {cache_file_path}: {e}", 1)
+        if isinstance(cache_data, dict) and "timestamp" in cache_data:
+            print_info(f"Saved {cache_name} with {len(cache_data) - 1} entries.") # -1 for timestamp
+        elif isinstance(cache_data, list):
+            print_info(f"Saved {cache_name} with {len(cache_data)} entries.")
+        else:
+            print_info(f"Saved {cache_name}.")
+    except Exception as e: print_error(f"Error saving {cache_name} to {cache_file_path}: {e}", 1)
 
 
 # --- Main Execution Block ---
@@ -1227,6 +1487,7 @@ if __name__ == "__main__":
         KEYWORDS_CACHE_FILE_PATH = os.path.join(script_directory, KEYWORDS_CACHE_FILENAME)
         METADATA_CACHE_FILE_PATH = os.path.join(script_directory, "metadata_cache.json") # Currently unused but path defined
         SEO_METADATA_PROMPT_CACHE_PATH = os.path.join(script_directory, SEO_METADATA_PROMPT_CACHE) # Path for cached SEO prompt
+        PLAYLIST_DATA_CACHE_PATH = os.path.join(script_directory, PLAYLIST_DATA_CACHE_FILENAME) # Path for playlist data cache
 
         print(f"{Fore.CYAN}--- Initializing Combined Downloader (SEO Focus + Self-Improvement) ---{Style.RESET_ALL}")
 
@@ -1431,6 +1692,10 @@ if __name__ == "__main__":
             except Exception as e: print_warning(f"Error loading keyword cache '{KEYWORDS_CACHE_FILENAME}': {e}. Initializing empty.")
         else: print_info(f"Keyword cache not found. Will generate keywords if needed.")
         search_keywords = list(keyword_frequency.keys()) # Get keywords from the loaded dict
+
+        # --- Load Playlist Data Cache ---
+        print_info("Loading Playlist Data Cache...")
+        playlist_data_cache = load_cache(PLAYLIST_DATA_CACHE_PATH, "Playlist Data")
 
         # --- Keyword Filtering (Kept from B) ---
         print_info("Applying keyword filters...")
@@ -1758,8 +2023,51 @@ if __name__ == "__main__":
                             # Generate Metadata
                             print_info("Generating SEO metadata...", 2)
                             seo_metadata = generate_metadata_with_timeout(original_title, uploader, original_title)
-                            if not seo_metadata or "error" in seo_metadata.get("tags",[]): print_warning("Metadata generation failed or resulted in error fallback.", 3); run_metrics["metadata_errors"] += 1; performance_metrics["total_metadata_errors"] += 1
-                            else: print_success("Metadata generated.", 3)
+                            if not seo_metadata or "error" in seo_metadata.get("tags",[]):
+                                print_warning("Metadata generation failed or resulted in error fallback.", 3)
+                                run_metrics["metadata_errors"] += 1
+                                performance_metrics["total_metadata_errors"] += 1
+                            else:
+                                print_success("Metadata generated.", 3)
+
+                                # Get category suggestion if not already present
+                                if "suggested_category" not in seo_metadata:
+                                    print_info("Getting category suggestion...", 3)
+                                    suggested_category = get_suggested_category(seo_metadata.get("title", original_title), seo_metadata.get("description", ""))
+                                    if suggested_category:
+                                        seo_metadata["suggested_category"] = suggested_category
+                                        print_success(f"Category suggestion: {suggested_category}", 3)
+                                    else:
+                                        print_warning("No category suggestion available.", 3)
+
+                                # Get playlist suggestion
+                                print_info("Getting playlist suggestion...", 3)
+                                # Extract existing playlist titles from cache
+                                existing_playlist_titles = []
+                                for key, value in playlist_data_cache.items():
+                                    if key != "timestamp" and not key.startswith("NEW: "):
+                                        existing_playlist_titles.append(value)
+
+                                # Get suggestion from Gemini
+                                playlist_suggestion = get_playlist_suggestion(
+                                    seo_metadata.get("title", original_title),
+                                    seo_metadata.get("description", ""),
+                                    seo_metadata.get("tags", []),
+                                    existing_playlist_titles
+                                )
+
+                                if playlist_suggestion:
+                                    seo_metadata["target_playlist"] = playlist_suggestion
+                                    print_success(f"Playlist suggestion: {playlist_suggestion}", 3)
+
+                                    # Add to cache if it's a NEW suggestion
+                                    if playlist_suggestion.startswith("NEW: ") and playlist_suggestion not in playlist_data_cache:
+                                        playlist_data_cache[playlist_suggestion] = None  # None indicates not created yet
+                                        save_cache(playlist_data_cache, PLAYLIST_DATA_CACHE_PATH, "Playlist Data")
+                                        print_info(f"Added new playlist suggestion to cache: {playlist_suggestion}", 4)
+                                else:
+                                    print_warning("No playlist suggestion available.", 3)
+
                             # Metadata API calls are tracked inside generate_metadata_with_timeout
 
                             # Prepare filenames
@@ -1880,6 +2188,47 @@ if __name__ == "__main__":
                 if suggestions: print_success(f"Tuning suggestions generated and saved to {TUNING_SUGGESTIONS_FILENAME}"); print_info(f"Suggestions preview:\n{suggestions[:400]}...", 1)
                 else: print_warning("Could not generate parameter tuning suggestions.", 1)
 
+        # --- Refresh Playlist Data if Needed ---
+        print(f"\n{Fore.CYAN}{Style.BRIGHT}--- Refreshing Playlist Data if Needed ---{Style.RESET_ALL}")
+
+        # Simple cache expiry - refetch all if cache is old (could be more granular)
+        refetch_playlists = True
+        if "timestamp" in playlist_data_cache:
+            try:
+                cache_time = datetime.fromisoformat(playlist_data_cache["timestamp"])
+                if datetime.now() - cache_time < timedelta(hours=24): # 24hr cache
+                    refetch_playlists = False
+                    print_info("Using cached playlist data (less than 24 hours old).")
+            except:
+                print_warning("Error reading playlist cache timestamp. Will refetch.")
+
+        # Initialize service variable for potential API calls
+        service = None
+        existing_playlists_api = {} # Will store API results if fetched
+
+        if refetch_playlists:
+            print_info("Fetching fresh playlist data from YouTube API...")
+            service = get_authenticated_service() # Get service if needed
+            if service:
+                existing_playlists_api = fetch_channel_playlists(service)
+                # Update cache: Keep existing suggestions, update API ones
+                new_cache_data = {"timestamp": datetime.now().isoformat()}
+                for p_id, p_title in existing_playlists_api.items():
+                    new_cache_data[p_id] = p_title # Add/update fetched playlists
+                # Keep previous NEW suggestions if they don't conflict with fetched IDs/Titles
+                existing_titles_lower = {t.lower() for t in existing_playlists_api.values()}
+                for key, val in playlist_data_cache.items():
+                    if key.startswith("NEW: ") and key not in new_cache_data:
+                        # Avoid adding if an existing playlist now has the same name
+                        suggested_title = key[len("NEW: "):]
+                        if suggested_title.lower() not in existing_titles_lower:
+                            new_cache_data[key] = val # Keep old NEW suggestion
+
+                playlist_data_cache = new_cache_data
+                save_cache(playlist_data_cache, PLAYLIST_DATA_CACHE_PATH, "Playlist Data")
+            else:
+                print_error("Cannot fetch playlists - API service unavailable. Using potentially stale cache.")
+
         # --- Final Operations ---
         print(f"\n{Fore.CYAN}{Style.BRIGHT}--- Final Operations ---{Style.RESET_ALL}")
 
@@ -1973,8 +2322,13 @@ if __name__ == "__main__":
 
         # Final Cache Saves
         print_info("Performing final cache saves...", 1)
-        save_cache(list(downloaded_video_ids), PLAYLIST_CACHE_FILE_PATH)
-        save_cache(keyword_frequency, KEYWORDS_CACHE_FILE_PATH)
+        save_cache(list(downloaded_video_ids), PLAYLIST_CACHE_FILE_PATH, "Downloaded Video IDs")
+        save_cache(keyword_frequency, KEYWORDS_CACHE_FILE_PATH, "Keyword Frequency")
+        # Safely save playlist data cache if it exists
+        if 'playlist_data_cache' in locals() and isinstance(playlist_data_cache, dict):
+            save_cache(playlist_data_cache, PLAYLIST_DATA_CACHE_PATH, "Playlist Data")
+        else:
+            print_warning("Playlist data cache invalid type or not initialized. Skipping save.")
         # Metadata metrics were saved after prompt check and during timeout/error handling
         print_success("Caches saved.")
 
