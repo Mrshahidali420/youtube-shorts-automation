@@ -140,7 +140,7 @@ def get_playlist_suggestion(video_title: str, video_desc: str, video_tags: list,
     """
 
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel("gemini-2.0-flash")
         response = model.generate_content(prompt)
         suggestion = response.text.strip()
 
@@ -425,7 +425,7 @@ def generate_keywords_from_niche(seed_niche, num_keywords=10, top_performing_key
     else: prompt = base_prompt
 
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash") # Using flash
+        model = genai.GenerativeModel("gemini-2.0-flash") # Using 2.0 flash
         response = model.generate_content(prompt)
         keywords = [line.strip() for line in response.text.splitlines() if line.strip()]
         # Basic filter applied here too
@@ -591,7 +591,7 @@ def improve_metadata_prompt(error_metrics):
     """
 
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash") # Using flash
+        model = genai.GenerativeModel("gemini-2.0-flash") # Using 2.0 flash
         response = model.generate_content(meta_prompt)
         improved_prompt = response.text.strip()
 
@@ -751,8 +751,8 @@ def generate_seo_metadata(video_topic, uploader_name="Unknown Uploader", origina
     }
 
     try:
-        # Using 1.5-flash for potential speed/cost savings, adjust if needed
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        # Using 2.0-flash for better quality and performance
+        model = genai.GenerativeModel("gemini-2.0-flash")
         response = model.generate_content(prompt)
         raw_text = response.text
 
@@ -992,7 +992,7 @@ def generate_keywords_from_niche(seed_niche, num_keywords=10, top_performing_key
     else: prompt = base_prompt
 
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash") # Using flash
+        model = genai.GenerativeModel("gemini-2.0-flash") # Using 2.0 flash
         response = model.generate_content(prompt)
         keywords = [line.strip() for line in response.text.splitlines() if line.strip()]
         # Basic filter applied here too
@@ -1111,7 +1111,7 @@ def get_suggested_category(title: str, description: str):
 
     try:
         print_info("Requesting category suggestion (with explicit list)...", 3)
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel("gemini-2.0-flash")
         response = model.generate_content(prompt)
         suggested_cat_raw = response.text.strip()
 
@@ -1348,7 +1348,7 @@ def generate_tuning_suggestions(metrics, config):
     Format suggestions clearly.
     """
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash") # Using flash
+        model = genai.GenerativeModel("gemini-2.0-flash") # Using 2.0 flash
         response = model.generate_content(prompt)
         suggestions = response.text.strip()
         suggestions_file_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), TUNING_SUGGESTIONS_FILENAME)

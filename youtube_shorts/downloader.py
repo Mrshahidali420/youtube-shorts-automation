@@ -97,7 +97,7 @@ def generate_keywords_from_niche(seed_niche, num_keywords=10, top_performing_key
     else: prompt = base_prompt
 
     try:
-        model = genai.GenerativeModel("gemini-1.5-pro") # Using pro for better quality
+        model = genai.GenerativeModel("gemini-2.0-flash") # Using 2.0 flash for better quality
         response = model.generate_content(prompt)
         keywords = [line.strip() for line in response.text.splitlines() if line.strip()]
         # Basic filter applied here too
@@ -158,7 +158,7 @@ def improve_metadata_prompt(error_metrics):
     """
 
     try:
-        model = genai.GenerativeModel("gemini-1.5-pro") # Using pro for better quality
+        model = genai.GenerativeModel("gemini-2.0-flash") # Using 2.0 flash for better quality
         response = model.generate_content(meta_prompt)
         improved_prompt = response.text.strip()
 
@@ -318,8 +318,8 @@ def generate_seo_metadata(video_topic, uploader_name="Unknown Uploader", origina
     }
 
     try:
-        # Using 1.5-pro for better quality
-        model = genai.GenerativeModel("gemini-1.5-pro")
+        # Using 2.0-flash for better quality
+        model = genai.GenerativeModel("gemini-2.0-flash")
         response = model.generate_content(prompt)
         raw_text = response.text
 

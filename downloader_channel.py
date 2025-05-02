@@ -615,7 +615,7 @@ def improve_metadata_prompt(error_metrics):
     Provide ONLY the improved prompt text, without any explanations or additional text.
     """
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel("gemini-2.0-flash")
         response = model.generate_content(meta_prompt)
         improved_prompt = response.text.strip()
 
@@ -672,7 +672,7 @@ def get_suggested_category(title: str, description: str):
 
     try:
         print_info("Requesting category suggestion (with explicit list)...", 3)
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel("gemini-2.0-flash")
         response = model.generate_content(prompt)
         suggested_cat_raw = response.text.strip()
 
@@ -768,7 +768,7 @@ def generate_tuning_suggestions(metrics, config):
     """
 
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel("gemini-2.0-flash")
         response = model.generate_content(prompt)
         suggestions = response.text.strip()
 
@@ -2727,7 +2727,7 @@ def get_playlist_suggestion(video_title: str, video_desc: str, video_tags: List[
     """
 
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
+        model = genai.GenerativeModel("gemini-2.0-flash")
         response = model.generate_content(prompt)
         suggestion = response.text.strip()
 
@@ -2924,7 +2924,7 @@ def generate_metadata_with_timeout_v2(video_title, uploader_name, original_title
             # Create a function to generate metadata that can be executed with timeout
             def generate_metadata_internal():
                 try:
-                    model = genai.GenerativeModel("gemini-1.5-flash")
+                    model = genai.GenerativeModel("gemini-2.0-flash")
                     response = model.generate_content(prompt)
                     raw_text = response.text
 
