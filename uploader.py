@@ -1765,56 +1765,83 @@ def upload_video(
                             print_success(f"Parsed YouTube Video ID: {youtube_video_id}", indent=4)
                             upload_successful = True # <<< Set success *here* after capturing ID
 
-                            # --- NEW: Playlist Management Logic ---
+                            # --- >>> REVISED: Playlist Management Logic <<< ---
                             target_playlist = metadata.get("target_playlist")
                             if target_playlist and youtube_video_id:
-                                print_info(f"Playlist target found in metadata: {target_playlist}", indent=3)
+                                print_info(f"Playlist target found in metadata: '{target_playlist}'", indent=3)
                                 playlist_id_to_add = None
+                                service_needed_for_playlist = False # Flag if we need API
 
-                                # Check if we need to create a new playlist
+                                # Check if it's a suggestion for a NEW playlist
                                 if target_playlist.startswith("NEW: "):
-                                    # Create new playlist
                                     new_playlist_title = target_playlist[len("NEW: "):].strip()
                                     if new_playlist_title:
-                                        # Need authenticated service here
-                                        # Ensure service object is available or re-authenticate if needed
-                                        if 'service' not in locals() or not service: # Example check
-                                            print_info("Authenticating service for playlist creation...", indent=4)
-                                            service = get_authenticated_service() # Get service if needed
+                                        print_info(f"Gemini suggested NEW playlist title: '{new_playlist_title}'", indent=4)
+                                        # --- Check if a playlist with this TITLE already exists in cache ---
+                                        existing_id_for_title = None
+                                        try:
+                                            # Load the latest cache before checking
+                                            playlist_cache = load_playlist_cache() # Reload cache
+                                            for p_id, p_title in playlist_cache.items():
+                                                if p_title == new_playlist_title and not p_id.startswith("NEW: "):
+                                                    existing_id_for_title = p_id
+                                                    break
+                                        except Exception as cache_e:
+                                             print_warning(f"Error checking playlist cache for existing title: {cache_e}", indent=4)
 
-                                        if service:
-                                            created_playlist_id = create_playlist(service, new_playlist_title)
-                                            if created_playlist_id:
-                                                playlist_id_to_add = created_playlist_id
-                                                # Update shared playlist cache
-                                                try:
-                                                    playlist_cache = load_playlist_cache()
-                                                    playlist_cache[created_playlist_id] = new_playlist_title # Add new ID->Title
-                                                    if target_playlist in playlist_cache: # Remove the "NEW:" entry
-                                                        del playlist_cache[target_playlist]
-                                                    playlist_cache["timestamp"] = datetime.now().isoformat() # Update timestamp
-                                                    save_playlist_cache(playlist_cache)
-                                                except Exception as cache_e:
-                                                    print_warning(f"Could not update playlist cache after creation: {cache_e}", indent=4)
-                                            else:
-                                                print_warning(f"Failed to create playlist '{new_playlist_title}'. Video not added to playlist.", indent=4)
+                                        if existing_id_for_title:
+                                            # Found existing playlist with the same title! Use its ID.
+                                            playlist_id_to_add = existing_id_for_title
+                                            print_success(f"Found EXISTING playlist with matching title: '{new_playlist_title}' (ID: {playlist_id_to_add}). Using this ID.", indent=4)
+                                            service_needed_for_playlist = True # Need service to add video
                                         else:
-                                            print_warning("Cannot create new playlist - API service unavailable.", indent=4)
-                                else:
-                                    # Assume it's an existing Playlist ID
-                                    playlist_id_to_add = target_playlist
+                                            # No existing playlist with this title found, proceed to create
+                                            print_info(f"No existing playlist found with title '{new_playlist_title}'. Attempting creation...", indent=4)
+                                            service_needed_for_playlist = True # Need service to create
+                                            if 'service' not in locals() or not service:
+                                                 service = get_authenticated_service()
 
-                                # Add to the identified or newly created playlist
+                                            if service:
+                                                 created_playlist_id = create_playlist(service, new_playlist_title)
+                                                 if created_playlist_id:
+                                                      playlist_id_to_add = created_playlist_id
+                                                      # Update cache with the NEWLY CREATED ID->Title mapping
+                                                      try:
+                                                           # Reload cache again before saving to avoid race conditions if ever run concurrently
+                                                           playlist_cache = load_playlist_cache()
+                                                           playlist_cache[created_playlist_id] = new_playlist_title
+                                                           # Remove the "NEW:" suggestion key if it existed
+                                                           if target_playlist in playlist_cache:
+                                                               del playlist_cache[target_playlist]
+                                                           playlist_cache["timestamp"] = datetime.now().isoformat()
+                                                           save_playlist_cache(playlist_cache)
+                                                      except Exception as cache_e:
+                                                           print_warning(f"Could not update playlist cache after creation: {cache_e}", indent=4)
+                                                 else:
+                                                      print_warning(f"Failed to create playlist '{new_playlist_title}'. Video not added to playlist.", indent=4)
+                                            else:
+                                                 print_warning("Cannot create new playlist - API service unavailable.", indent=4)
+                                    else:
+                                         print_warning("Gemini suggested 'NEW: ' but title was empty. Skipping playlist.", indent=4)
+                                else:
+                                     # It's assumed to be an existing Playlist ID
+                                     playlist_id_to_add = target_playlist
+                                     print_info(f"Using existing playlist ID from metadata: {playlist_id_to_add}", indent=4)
+                                     service_needed_for_playlist = True # Need service to add
+
+                                # --- Add video to the playlist if an ID was determined ---
                                 if playlist_id_to_add:
-                                    if 'service' not in locals() or not service: # Ensure service
+                                    if service_needed_for_playlist and ('service' not in locals() or not service):
+                                        print_info("Authenticating service for adding video to playlist...", indent=4)
                                         service = get_authenticated_service()
+
                                     if service:
                                         add_video_to_playlist(service, youtube_video_id, playlist_id_to_add)
                                     else:
                                         print_warning(f"Cannot add to playlist {playlist_id_to_add} - API service unavailable.", indent=4)
                             else:
                                 print_info("No target playlist specified in metadata.", indent=3)
-                            # --- END Playlist Management Logic ---
+                            # --- >>> END Playlist Management Logic <<< ---
 
                         else:
                             print_warning(f"Could not parse YouTube Video ID from Share URL: {share_url}", indent=4)
@@ -1993,56 +2020,83 @@ def upload_video(
                                 print_success(f"Parsed YouTube Video ID: {youtube_video_id}", indent=4)
                                 upload_successful = True # <<< Set success *here* after capturing ID
 
-                                # --- NEW: Playlist Management Logic ---
+                                # --- >>> REVISED: Playlist Management Logic <<< ---
                                 target_playlist = metadata.get("target_playlist")
                                 if target_playlist and youtube_video_id:
-                                    print_info(f"Playlist target found in metadata: {target_playlist}", indent=3)
+                                    print_info(f"Playlist target found in metadata: '{target_playlist}'", indent=3)
                                     playlist_id_to_add = None
+                                    service_needed_for_playlist = False # Flag if we need API
 
-                                    # Check if we need to create a new playlist
+                                    # Check if it's a suggestion for a NEW playlist
                                     if target_playlist.startswith("NEW: "):
-                                        # Create new playlist
                                         new_playlist_title = target_playlist[len("NEW: "):].strip()
                                         if new_playlist_title:
-                                            # Need authenticated service here
-                                            # Ensure service object is available or re-authenticate if needed
-                                            if 'service' not in locals() or not service: # Example check
-                                                print_info("Authenticating service for playlist creation...", indent=4)
-                                                service = get_authenticated_service() # Get service if needed
+                                            print_info(f"Gemini suggested NEW playlist title: '{new_playlist_title}'", indent=4)
+                                            # --- Check if a playlist with this TITLE already exists in cache ---
+                                            existing_id_for_title = None
+                                            try:
+                                                # Load the latest cache before checking
+                                                playlist_cache = load_playlist_cache() # Reload cache
+                                                for p_id, p_title in playlist_cache.items():
+                                                    if p_title == new_playlist_title and not p_id.startswith("NEW: "):
+                                                        existing_id_for_title = p_id
+                                                        break
+                                            except Exception as cache_e:
+                                                 print_warning(f"Error checking playlist cache for existing title: {cache_e}", indent=4)
 
-                                            if service:
-                                                created_playlist_id = create_playlist(service, new_playlist_title)
-                                                if created_playlist_id:
-                                                    playlist_id_to_add = created_playlist_id
-                                                    # Update shared playlist cache
-                                                    try:
-                                                        playlist_cache = load_playlist_cache()
-                                                        playlist_cache[created_playlist_id] = new_playlist_title # Add new ID->Title
-                                                        if target_playlist in playlist_cache: # Remove the "NEW:" entry
-                                                            del playlist_cache[target_playlist]
-                                                        playlist_cache["timestamp"] = datetime.now().isoformat() # Update timestamp
-                                                        save_playlist_cache(playlist_cache)
-                                                    except Exception as cache_e:
-                                                        print_warning(f"Could not update playlist cache after creation: {cache_e}", indent=4)
-                                                else:
-                                                    print_warning(f"Failed to create playlist '{new_playlist_title}'. Video not added to playlist.", indent=4)
+                                            if existing_id_for_title:
+                                                # Found existing playlist with the same title! Use its ID.
+                                                playlist_id_to_add = existing_id_for_title
+                                                print_success(f"Found EXISTING playlist with matching title: '{new_playlist_title}' (ID: {playlist_id_to_add}). Using this ID.", indent=4)
+                                                service_needed_for_playlist = True # Need service to add video
                                             else:
-                                                print_warning("Cannot create new playlist - API service unavailable.", indent=4)
-                                    else:
-                                        # Assume it's an existing Playlist ID
-                                        playlist_id_to_add = target_playlist
+                                                # No existing playlist with this title found, proceed to create
+                                                print_info(f"No existing playlist found with title '{new_playlist_title}'. Attempting creation...", indent=4)
+                                                service_needed_for_playlist = True # Need service to create
+                                                if 'service' not in locals() or not service:
+                                                     service = get_authenticated_service()
 
-                                    # Add to the identified or newly created playlist
+                                                if service:
+                                                     created_playlist_id = create_playlist(service, new_playlist_title)
+                                                     if created_playlist_id:
+                                                          playlist_id_to_add = created_playlist_id
+                                                          # Update cache with the NEWLY CREATED ID->Title mapping
+                                                          try:
+                                                               # Reload cache again before saving to avoid race conditions if ever run concurrently
+                                                               playlist_cache = load_playlist_cache()
+                                                               playlist_cache[created_playlist_id] = new_playlist_title
+                                                               # Remove the "NEW:" suggestion key if it existed
+                                                               if target_playlist in playlist_cache:
+                                                                   del playlist_cache[target_playlist]
+                                                               playlist_cache["timestamp"] = datetime.now().isoformat()
+                                                               save_playlist_cache(playlist_cache)
+                                                          except Exception as cache_e:
+                                                               print_warning(f"Could not update playlist cache after creation: {cache_e}", indent=4)
+                                                     else:
+                                                          print_warning(f"Failed to create playlist '{new_playlist_title}'. Video not added to playlist.", indent=4)
+                                                else:
+                                                     print_warning("Cannot create new playlist - API service unavailable.", indent=4)
+                                        else:
+                                             print_warning("Gemini suggested 'NEW: ' but title was empty. Skipping playlist.", indent=4)
+                                    else:
+                                         # It's assumed to be an existing Playlist ID
+                                         playlist_id_to_add = target_playlist
+                                         print_info(f"Using existing playlist ID from metadata: {playlist_id_to_add}", indent=4)
+                                         service_needed_for_playlist = True # Need service to add
+
+                                    # --- Add video to the playlist if an ID was determined ---
                                     if playlist_id_to_add:
-                                        if 'service' not in locals() or not service: # Ensure service
+                                        if service_needed_for_playlist and ('service' not in locals() or not service):
+                                            print_info("Authenticating service for adding video to playlist...", indent=4)
                                             service = get_authenticated_service()
+
                                         if service:
                                             add_video_to_playlist(service, youtube_video_id, playlist_id_to_add)
                                         else:
                                             print_warning(f"Cannot add to playlist {playlist_id_to_add} - API service unavailable.", indent=4)
                                 else:
                                     print_info("No target playlist specified in metadata.", indent=3)
-                                # --- END Playlist Management Logic ---
+                                # --- >>> END Playlist Management Logic <<< ---
 
                             else:
                                 print_warning(f"Could not parse YouTube Video ID from Share URL: {share_url}", indent=4)
