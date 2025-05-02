@@ -6,7 +6,7 @@ import re
 import random
 import csv # Keep import for potential future use, though not directly used for scheduling now
 from datetime import datetime, timedelta, time as dt_time # Added time import
-from typing import Optional, Tuple, List, Dict
+from typing import Optional, Tuple, List, Dict, Any # Import Any and others
 
 import traceback # For detailed error logging to file
 import platform # For OS detection
@@ -135,15 +135,18 @@ UPLOAD_CORRELATION_CACHE_FILENAME = "upload_correlation_cache.json" # For tracki
 UPLOAD_CORRELATION_CACHE_PATH = os.path.join(script_directory, UPLOAD_CORRELATION_CACHE_FILENAME)
 ANALYTICS_PEAK_TIMES_CACHE_FILENAME = "analytics_peak_times_cache.json" # For caching peak viewer hours from YouTube Analytics
 ANALYTICS_PEAK_TIMES_CACHE_PATH = os.path.join(script_directory, ANALYTICS_PEAK_TIMES_CACHE_FILENAME)
+PLAYLIST_DATA_CACHE_FILENAME = "playlists_data_cache.json" # For storing playlist data (IDs and titles)
+PLAYLIST_DATA_CACHE_PATH = os.path.join(script_directory, PLAYLIST_DATA_CACHE_FILENAME)
 # --- End Path Definitions ---
 
 # --- YouTube API Authentication Constants ---
 CLIENT_SECRETS_FILE = os.path.join(script_directory, "client_secret.json")
 TOKEN_FILE = os.path.join(script_directory, "token.json")
-# Scopes for YouTube API access - includes both Data API and Analytics API
+# Scopes for YouTube API access - includes Data API, Analytics API, and Playlist Management
 SCOPES = [
     "https://www.googleapis.com/auth/youtube.readonly",
-    "https://www.googleapis.com/auth/yt-analytics.readonly"
+    "https://www.googleapis.com/auth/yt-analytics.readonly",
+    "https://www.googleapis.com/auth/youtube"  # Added for playlist management
 ]
 # --- End YouTube API Authentication Constants ---
 
@@ -677,6 +680,191 @@ def is_peak_time_manual(dt_object: datetime, peak_slots: List[Tuple[dt_time, dt_
     return False
 # --- End YouTube Analytics API Functions ---
 
+# --- Playlist Management Functions ---
+def load_playlist_cache() -> Dict:
+    """Loads the playlist data cache from JSON file."""
+    default_cache = {"timestamp": datetime.now().isoformat()}
+    try:
+        if os.path.exists(PLAYLIST_DATA_CACHE_PATH):
+            with open(PLAYLIST_DATA_CACHE_PATH, "r", encoding="utf-8") as f:
+                content = f.read()
+                if not content:
+                    print_info("Playlist cache file exists but is empty. Initializing new cache.")
+                    return default_cache
+                cache = json.loads(content)
+                if not isinstance(cache, dict):
+                    print_warning(f"Playlist cache file '{PLAYLIST_DATA_CACHE_FILENAME}' has invalid format (expected dict). Initializing new cache.")
+                    return default_cache
+                return cache
+        else:
+            print_info(f"Playlist cache file '{PLAYLIST_DATA_CACHE_FILENAME}' not found. Creating new cache.")
+            return default_cache
+    except json.JSONDecodeError:
+        print_error(f"Error decoding JSON from playlist cache file '{PLAYLIST_DATA_CACHE_FILENAME}'. Initializing new cache.")
+        return default_cache
+    except Exception as e:
+        print_error(f"Error loading playlist cache: {e}", include_traceback=True)
+        return default_cache
+
+def save_playlist_cache(cache_data: Dict):
+    """Saves the playlist data cache to JSON file."""
+    try:
+        with open(PLAYLIST_DATA_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(cache_data, f, ensure_ascii=False, indent=4)
+        print_info(f"Saved playlist cache with {len(cache_data) - 1} entries.") # -1 for timestamp
+    except Exception as e:
+        print_error(f"Error saving playlist cache: {e}", include_traceback=True)
+
+def fetch_channel_playlists(service: Any) -> Dict[str, str]:
+    """Fetches existing public playlists for the authenticated user's channel.
+
+    Args:
+        service: Authenticated YouTube API service object
+
+    Returns:
+        Dictionary mapping playlist IDs to playlist titles
+    """
+    if not service:
+        print_warning("YouTube API service not available, cannot fetch playlists.")
+        return {}
+
+    playlists_map = {}
+    next_page_token = None
+    print_info("Fetching existing channel playlists via YouTube API...")
+    try:
+        while True:
+            request = service.playlists().list(
+                part="snippet",
+                mine=True, # Get playlists for the authenticated user
+                maxResults=50,
+                pageToken=next_page_token
+            )
+            response = request.execute()
+
+            for item in response.get("items", []):
+                playlist_id = item.get("id")
+                playlist_title = item.get("snippet", {}).get("title")
+                if playlist_id and playlist_title:
+                    playlists_map[playlist_id] = playlist_title
+
+            next_page_token = response.get("nextPageToken")
+            if not next_page_token:
+                break # Exit loop if no more pages
+            time.sleep(0.5) # Avoid hitting API limits too quickly
+
+        print_success(f"Fetched {len(playlists_map)} existing playlists.")
+        return playlists_map
+
+    except HttpError as e:
+        print_error(f"API Error fetching playlists: {e}", include_traceback=True)
+        log_error_to_file(f"API Error fetching playlists: {e}", include_traceback=True)
+        return playlists_map # Return what we got so far
+    except Exception as e:
+        print_error(f"Unexpected error fetching playlists: {e}", include_traceback=True)
+        log_error_to_file(f"Unexpected error fetching playlists: {e}", include_traceback=True)
+        return playlists_map
+
+def create_playlist(service: Any, title: str, description: str = "") -> Optional[str]:
+    """Creates a new private playlist and returns its ID.
+
+    Args:
+        service: Authenticated YouTube API service object
+        title: Title for the new playlist
+        description: Optional description for the playlist
+
+    Returns:
+        Playlist ID if successful, None otherwise
+    """
+    if not service or not title:
+        print_warning("Missing service or title for creating playlist.")
+        return None
+
+    print_info(f"Attempting to create new playlist via API: '{title}'", 3)
+    try:
+        request = service.playlists().insert(
+            part="snippet,status",
+            body={
+              "snippet": {
+                "title": title,
+                "description": description,
+                "defaultLanguage": "en" # Optional: set language
+              },
+              "status": {
+                "privacyStatus": "private" # Or "public", "unlisted"
+              }
+            }
+        )
+        response = request.execute()
+        playlist_id = response.get("id")
+        if playlist_id:
+            print_success(f"Successfully created playlist '{title}' with ID: {playlist_id}", 4)
+            return playlist_id
+        else:
+            print_error(f"Failed to create playlist '{title}'. No ID returned.", 4)
+            return None
+    except HttpError as e:
+         print_error(f"API Error creating playlist '{title}': {e}", 4)
+         log_error_to_file(f"API Error creating playlist '{title}': {e}", include_traceback=True)
+         return None
+    except Exception as e:
+         print_error(f"Unexpected error creating playlist '{title}': {e}", 4, include_traceback=True)
+         log_error_to_file(f"Unexpected error creating playlist '{title}': {e}", include_traceback=True)
+         return None
+
+def add_video_to_playlist(service: Any, video_id: str, playlist_id: str) -> bool:
+    """Adds a video to a specified playlist using YouTube Data API.
+
+    Args:
+        service: Authenticated YouTube API service object
+        video_id: YouTube video ID to add
+        playlist_id: YouTube playlist ID to add the video to
+
+    Returns:
+        True if successful, False otherwise
+    """
+    if not service or not video_id or not playlist_id:
+        print_warning("Missing service, video ID, or playlist ID for adding to playlist.")
+        return False
+
+    try:
+        request = service.playlistItems().insert(
+            part="snippet",
+            body={
+                "snippet": {
+                    "playlistId": playlist_id,
+                    "resourceId": {
+                        "kind": "youtube#video",
+                        "videoId": video_id
+                    }
+                    # Optional: Set position 'position': 0 # Add to top
+                }
+            }
+        )
+        response = request.execute()
+        print_success(f"Successfully added video {video_id} to playlist {playlist_id}.", 4)
+        return True
+    except HttpError as e:
+        # Handle common errors like "playlistNotFound" or "videoNotFound"
+        error_details = e.resp.get('content', b'').decode('utf-8')
+        if e.resp.status == 404:
+             if "playlistNotFound" in error_details:
+                 print_warning(f"Playlist ID '{playlist_id}' not found. Could not add video.", 4)
+             elif "videoNotFound" in error_details:
+                 print_warning(f"Video ID '{video_id}' not found. Could not add to playlist.", 4)
+             else:
+                 print_error(f"API Error 404 adding video {video_id} to playlist {playlist_id}: {e}", 4)
+        elif e.resp.status == 403:
+             print_error(f"Permission denied adding video {video_id} to playlist {playlist_id}. Check API scopes/permissions. Error: {e}", 4)
+        else:
+             print_error(f"API Error adding video {video_id} to playlist {playlist_id}: {e}", 4)
+        log_error_to_file(f"API Error adding video {video_id} to playlist {playlist_id}: {e}", include_traceback=True)
+        return False
+    except Exception as e:
+         print_error(f"Unexpected error adding video {video_id} to playlist {playlist_id}: {e}", 4, include_traceback=True)
+         log_error_to_file(f"Unexpected error adding video {video_id} to playlist {playlist_id}: {e}", include_traceback=True)
+         return False
+# --- End Playlist Management Functions ---
+
 # --- Configuration Loading ---
 config = {}
 try:
@@ -1035,7 +1223,8 @@ def upload_video(
     desc_limit: int = DEFAULT_YOUTUBE_DESCRIPTION_LIMIT,
     tag_char_limit: int = DEFAULT_YOUTUBE_TAG_LIMIT,
     total_char_limit: int = DEFAULT_YOUTUBE_TOTAL_TAGS_LIMIT,
-    max_count_limit: int = DEFAULT_YOUTUBE_MAX_TAGS_COUNT
+    max_count_limit: int = DEFAULT_YOUTUBE_MAX_TAGS_COUNT,
+    service: Optional[Any] = None  # Added service parameter for playlist management
 ) -> Optional[str]:
     """Handles the video upload process on YouTube Studio, using provided limits and fallback XPaths."""
     video_index = metadata.get('video_index', 'UNKNOWN') # Get index for logging
@@ -1575,6 +1764,58 @@ def upload_video(
                             youtube_video_id = match.group(1)
                             print_success(f"Parsed YouTube Video ID: {youtube_video_id}", indent=4)
                             upload_successful = True # <<< Set success *here* after capturing ID
+
+                            # --- NEW: Playlist Management Logic ---
+                            target_playlist = metadata.get("target_playlist")
+                            if target_playlist and youtube_video_id:
+                                print_info(f"Playlist target found in metadata: {target_playlist}", indent=3)
+                                playlist_id_to_add = None
+
+                                # Check if we need to create a new playlist
+                                if target_playlist.startswith("NEW: "):
+                                    # Create new playlist
+                                    new_playlist_title = target_playlist[len("NEW: "):].strip()
+                                    if new_playlist_title:
+                                        # Need authenticated service here
+                                        # Ensure service object is available or re-authenticate if needed
+                                        if 'service' not in locals() or not service: # Example check
+                                            print_info("Authenticating service for playlist creation...", indent=4)
+                                            service = get_authenticated_service() # Get service if needed
+
+                                        if service:
+                                            created_playlist_id = create_playlist(service, new_playlist_title)
+                                            if created_playlist_id:
+                                                playlist_id_to_add = created_playlist_id
+                                                # Update shared playlist cache
+                                                try:
+                                                    playlist_cache = load_playlist_cache()
+                                                    playlist_cache[created_playlist_id] = new_playlist_title # Add new ID->Title
+                                                    if target_playlist in playlist_cache: # Remove the "NEW:" entry
+                                                        del playlist_cache[target_playlist]
+                                                    playlist_cache["timestamp"] = datetime.now().isoformat() # Update timestamp
+                                                    save_playlist_cache(playlist_cache)
+                                                except Exception as cache_e:
+                                                    print_warning(f"Could not update playlist cache after creation: {cache_e}", indent=4)
+                                            else:
+                                                print_warning(f"Failed to create playlist '{new_playlist_title}'. Video not added to playlist.", indent=4)
+                                        else:
+                                            print_warning("Cannot create new playlist - API service unavailable.", indent=4)
+                                else:
+                                    # Assume it's an existing Playlist ID
+                                    playlist_id_to_add = target_playlist
+
+                                # Add to the identified or newly created playlist
+                                if playlist_id_to_add:
+                                    if 'service' not in locals() or not service: # Ensure service
+                                        service = get_authenticated_service()
+                                    if service:
+                                        add_video_to_playlist(service, youtube_video_id, playlist_id_to_add)
+                                    else:
+                                        print_warning(f"Cannot add to playlist {playlist_id_to_add} - API service unavailable.", indent=4)
+                            else:
+                                print_info("No target playlist specified in metadata.", indent=3)
+                            # --- END Playlist Management Logic ---
+
                         else:
                             print_warning(f"Could not parse YouTube Video ID from Share URL: {share_url}", indent=4)
                             upload_successful = False # Mark as failed if ID not parsed
@@ -1751,6 +1992,58 @@ def upload_video(
                                 youtube_video_id = match.group(1)
                                 print_success(f"Parsed YouTube Video ID: {youtube_video_id}", indent=4)
                                 upload_successful = True # <<< Set success *here* after capturing ID
+
+                                # --- NEW: Playlist Management Logic ---
+                                target_playlist = metadata.get("target_playlist")
+                                if target_playlist and youtube_video_id:
+                                    print_info(f"Playlist target found in metadata: {target_playlist}", indent=3)
+                                    playlist_id_to_add = None
+
+                                    # Check if we need to create a new playlist
+                                    if target_playlist.startswith("NEW: "):
+                                        # Create new playlist
+                                        new_playlist_title = target_playlist[len("NEW: "):].strip()
+                                        if new_playlist_title:
+                                            # Need authenticated service here
+                                            # Ensure service object is available or re-authenticate if needed
+                                            if 'service' not in locals() or not service: # Example check
+                                                print_info("Authenticating service for playlist creation...", indent=4)
+                                                service = get_authenticated_service() # Get service if needed
+
+                                            if service:
+                                                created_playlist_id = create_playlist(service, new_playlist_title)
+                                                if created_playlist_id:
+                                                    playlist_id_to_add = created_playlist_id
+                                                    # Update shared playlist cache
+                                                    try:
+                                                        playlist_cache = load_playlist_cache()
+                                                        playlist_cache[created_playlist_id] = new_playlist_title # Add new ID->Title
+                                                        if target_playlist in playlist_cache: # Remove the "NEW:" entry
+                                                            del playlist_cache[target_playlist]
+                                                        playlist_cache["timestamp"] = datetime.now().isoformat() # Update timestamp
+                                                        save_playlist_cache(playlist_cache)
+                                                    except Exception as cache_e:
+                                                        print_warning(f"Could not update playlist cache after creation: {cache_e}", indent=4)
+                                                else:
+                                                    print_warning(f"Failed to create playlist '{new_playlist_title}'. Video not added to playlist.", indent=4)
+                                            else:
+                                                print_warning("Cannot create new playlist - API service unavailable.", indent=4)
+                                    else:
+                                        # Assume it's an existing Playlist ID
+                                        playlist_id_to_add = target_playlist
+
+                                    # Add to the identified or newly created playlist
+                                    if playlist_id_to_add:
+                                        if 'service' not in locals() or not service: # Ensure service
+                                            service = get_authenticated_service()
+                                        if service:
+                                            add_video_to_playlist(service, youtube_video_id, playlist_id_to_add)
+                                        else:
+                                            print_warning(f"Cannot add to playlist {playlist_id_to_add} - API service unavailable.", indent=4)
+                                else:
+                                    print_info("No target playlist specified in metadata.", indent=3)
+                                # --- END Playlist Management Logic ---
+
                             else:
                                 print_warning(f"Could not parse YouTube Video ID from Share URL: {share_url}", indent=4)
                                 upload_successful = False
@@ -2285,6 +2578,22 @@ def main():
         service = None
         peak_hours_from_analytics = []  # Initialize empty list for peak hours
 
+        # --- Playlist Management Initialization ---
+        print_section_header("Loading Playlist Data")
+        playlist_cache = load_playlist_cache()
+        playlist_titles = []
+
+        # Extract playlist titles from cache for display
+        for key, value in playlist_cache.items():
+            if key != "timestamp" and not key.startswith("NEW: ") and value is not None:
+                playlist_titles.append(value)
+
+        if playlist_titles:
+            print_info(f"Loaded {len(playlist_titles)} existing playlists from cache.")
+        else:
+            print_info("No existing playlists found in cache. Will fetch from API if needed.")
+        # --- End Playlist Management Initialization ---
+
         if enable_analytics_scheduling:
             print_section_header("Fetching/Loading Peak Viewer Times")
             cached_data = load_peak_times_cache()
@@ -2314,6 +2623,7 @@ def main():
                     service = get_authenticated_service()
 
                     if service:
+                        # Fetch peak hours for analytics
                         fetched_hours = get_peak_viewer_hours_from_api(
                             service,
                             analytics_days_to_analyze,
@@ -2324,8 +2634,35 @@ def main():
                             save_peak_times_cache(peak_hours_from_analytics)
                         else:
                             print_warning("Failed to fetch peak hours from API. Dynamic scheduling might use default intervals.")
+
+                        # Fetch playlists for playlist management
+                        print_section_header("Fetching Channel Playlists")
+                        existing_playlists_api = fetch_channel_playlists(service)
+                        if existing_playlists_api:
+                            # Update cache with fetched playlists
+                            print_info(f"Updating playlist cache with {len(existing_playlists_api)} playlists from API.")
+                            new_cache_data = {"timestamp": datetime.now().isoformat()}
+
+                            # Add/update fetched playlists
+                            for p_id, p_title in existing_playlists_api.items():
+                                new_cache_data[p_id] = p_title
+
+                            # Keep previous NEW suggestions if they don't conflict with fetched IDs/Titles
+                            existing_titles_lower = {t.lower() for t in existing_playlists_api.values()}
+                            for key, val in playlist_cache.items():
+                                if key.startswith("NEW: ") and key not in new_cache_data:
+                                    # Avoid adding if an existing playlist now has the same name
+                                    suggested_title = key[len("NEW: "):]
+                                    if suggested_title.lower() not in existing_titles_lower:
+                                        new_cache_data[key] = val  # Keep old NEW suggestion
+
+                            # Update the cache
+                            playlist_cache = new_cache_data
+                            save_playlist_cache(playlist_cache)
+                        else:
+                            print_warning("No playlists fetched from API or API error occurred.")
                     else:
-                        print_error("YouTube API service could not be authenticated. Cannot fetch peak times.")
+                        print_error("YouTube API service could not be authenticated. Cannot fetch peak times or playlists.")
         # --- End YouTube Analytics API Integration ---
 
         uploaded_count = 0
@@ -2526,7 +2863,8 @@ def main():
                         desc_limit=cfg_desc_limit,
                         tag_char_limit=cfg_tag_limit,
                         total_char_limit=cfg_total_tags_limit,
-                        max_count_limit=cfg_max_tags_count
+                        max_count_limit=cfg_max_tags_count,
+                        service=service  # Pass the service object for playlist management
                     )
 
                     # --- Check Success for THIS attempt ---
