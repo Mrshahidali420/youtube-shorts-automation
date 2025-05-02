@@ -1,6 +1,6 @@
 # YouTube Shorts Automation Suite with Self-Improvement
 
-[![GitHub Release](https://img.shields.io/badge/release-v1.3.0-blue)](https://github.com/Mrshahidali420/youtube-shorts-automation/releases)
+[![GitHub Release](https://img.shields.io/badge/release-v1.4.0-blue)](https://github.com/Mrshahidali420/youtube-shorts-automation/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 This suite of scripts automates the entire YouTube Shorts workflow - from finding videos to tracking performance. It includes advanced self-improvement features that use AI to analyze performance, optimize metadata, and suggest improvements.
@@ -38,7 +38,8 @@ These components work together to create a complete automation pipeline for YouT
 - **Automated Uploads**: Batch upload videos to YouTube as Shorts
 - **Metadata Management**: Apply optimized titles, descriptions, and tags
 - **Smart Category Selection**: Uses AI-suggested categories with fallback to default configuration
-- **Scheduling**: Schedule videos for future publication
+- **Dynamic Scheduling**: Schedule videos based on YouTube Analytics data for optimal viewer engagement
+- **Flexible Scheduling Modes**: Choose between immediate publishing, fixed intervals, custom times, or analytics-based scheduling
 - **Error Handling**: Robust error detection and recovery
 - **Performance Tracking**: Track upload success rates and error patterns
 - **AI-Assisted Analysis**: Use Google's Gemini AI to analyze errors and suggest improvements
@@ -105,13 +106,16 @@ UPLOAD_CATEGORY=Gaming  # Default YouTube category for uploads (used as fallback
 # --- Scheduling Settings ---
 
 # Mode for scheduling uploads. Options:
-#   default_interval = Publish first video now, schedule subsequent videos at fixed interval.
-#   custom_tomorrow  = Try custom schedule times from config (for tomorrow onwards), then use fixed interval fallback. NO immediate publish.
-SCHEDULING_MODE=custom_tomorrow
+#   analytics_priority = Automatically schedule videos during peak viewer hours based on YouTube Analytics data.
+#   default_interval   = Publish first video now, schedule subsequent videos at fixed interval.
+#   custom_tomorrow    = Try custom schedule times from config (for tomorrow onwards), then use fixed interval fallback.
+SCHEDULING_MODE=analytics_priority
 
-# Fixed interval (in minutes) used for scheduling in 'default_interval' mode
-# AND as the fallback interval in 'custom_tomorrow' mode when custom slots are exhausted/invalid.
-SCHEDULE_INTERVAL_MINUTES=240
+# Fallback interval (in minutes) used when:
+# - analytics_priority mode can't find a suitable peak hour
+# - default_interval mode for all videos after the first
+# - custom_tomorrow mode when custom slots are exhausted/invalid
+SCHEDULE_INTERVAL_MINUTES=120
 
 # List of preferred schedule times (HH:MM AM/PM format, comma-separated) for 'custom_tomorrow' mode.
 # The script will try to use these times sequentially for videos in a run, always targeting TOMORROW's date or later.
@@ -120,6 +124,20 @@ CUSTOM_SCHEDULE_TIMES=6:00 AM, 9:00 AM, 11:30 AM, 3:00 PM, 6:00 PM, 10:00 PM
 # Minimum number of minutes ahead of the current time a video can be scheduled.
 # Prevents scheduling too close to the current time, which YouTube might reject.
 MIN_SCHEDULE_AHEAD_MINUTES=20
+
+# --- Analytics-Based Scheduling Settings ---
+# These settings apply to the analytics_priority mode
+
+# Number of days of analytics data to analyze for determining peak hours
+ANALYTICS_DAYS_TO_ANALYZE=7
+
+# Number of peak hours to identify from analytics data (1-24)
+# Higher values include more hours but may dilute the focus on truly peak times
+ANALYTICS_PEAK_HOURS_COUNT=5
+
+# How long to cache analytics data before refreshing (in hours)
+# Lower values provide more up-to-date data but increase API calls
+ANALYTICS_CACHE_EXPIRY_HOURS=24
 
 # Browser Profile
 PROFILE_PATH=C:\Users\YourUsername\AppData\Roaming\Mozilla\Firefox\Profiles\yourprofile.default
@@ -146,8 +164,32 @@ EXCEL_ARCHIVE_DAYS=180
 
 #### Scheduling Modes
 
+- **analytics_priority** (Recommended): Automatically schedules videos during peak viewer hours based on YouTube Analytics data. The script will:
+  1. Query the YouTube Analytics API to identify your channel's peak viewer hours
+  2. Automatically schedule videos during those peak hours
+  3. Use the fallback interval only when no suitable peak hour can be found
+  4. Cache the analytics data to minimize API calls
+
 - **default_interval**: Publishes the first video immediately and schedules subsequent videos at fixed intervals defined by `SCHEDULE_INTERVAL_MINUTES`.
+
 - **custom_tomorrow**: Uses the times specified in `CUSTOM_SCHEDULE_TIMES` starting from tomorrow, then falls back to fixed intervals if needed. No videos are published immediately.
+
+#### Analytics-Based Scheduling
+
+The analytics_priority mode provides fully automatic, data-driven scheduling:
+
+1. **Automatic Peak Hour Detection**: Identifies when your audience is most active
+2. **Smart Scheduling**: Prioritizes uploads during those peak hours
+3. **Fallback Mechanism**: Uses standard interval when no suitable peak hour is available
+4. **Configurable Parameters**:
+   - `ANALYTICS_DAYS_TO_ANALYZE`: How many days of historical data to analyze
+   - `ANALYTICS_PEAK_HOURS_COUNT`: How many peak hours to identify
+   - `ANALYTICS_CACHE_EXPIRY_HOURS`: How long to cache analytics data
+
+This feature requires:
+- YouTube Analytics API access (automatically enabled when you authenticate)
+- The `token.json` file to be deleted the first time you use this feature (to request the additional API scope)
+- A channel with sufficient historical data for meaningful analysis
 
 #### Firefox Profile
 
@@ -330,17 +372,33 @@ The channel-based downloader will:
 
 ## Releases
 
-### Latest Release: [v1.3.0](https://github.com/Mrshahidali420/youtube-shorts-automation/releases/tag/v1.3.0)
+### Latest Release: [v1.4.0](https://github.com/Mrshahidali420/youtube-shorts-automation/releases/tag/v1.4.0)
 
-The latest stable release of the YouTube Shorts Automation Suite is v1.3.0. You can:
+The latest stable release of the YouTube Shorts Automation Suite is v1.4.0. You can:
 
-- **Download**: Get the [ZIP file](https://github.com/Mrshahidali420/youtube-shorts-automation/archive/refs/tags/v1.3.0.zip) directly
-- **Clone**: Use Git to clone a specific version: `git clone -b v1.3.0 https://github.com/Mrshahidali420/youtube-shorts-automation.git`
-- **Install**: Install with pip: `pip install git+https://github.com/Mrshahidali420/youtube-shorts-automation.git@v1.3.0`
+- **Download**: Get the [ZIP file](https://github.com/Mrshahidali420/youtube-shorts-automation/archive/refs/tags/v1.4.0.zip) directly
+- **Clone**: Use Git to clone a specific version: `git clone -b v1.4.0 https://github.com/Mrshahidali420/youtube-shorts-automation.git`
+- **Install**: Install with pip: `pip install git+https://github.com/Mrshahidali420/youtube-shorts-automation.git@v1.4.0`
 
 ### Release Notes
 
-#### v1.3.0 - Latest Release
+#### v1.4.0 - Latest Release
+
+**New Features:**
+- **Analytics Priority Mode**: New scheduling mode that automatically prioritizes peak viewer hours
+- **Fully Automatic Scheduling**: Simplified configuration with intelligent, data-driven scheduling
+- **Peak Hour Detection**: Automatically identifies peak viewer hours for your channel
+- **Smart Time Slot Selection**: Finds the next available peak hour for each video
+- **Analytics Caching**: Caches analytics data to minimize API calls and improve performance
+
+**Improvements:**
+- Enhanced scheduling logic to optimize video visibility
+- Simplified configuration with sensible defaults
+- Improved documentation for analytics-based scheduling
+- Added graceful fallback when analytics data is unavailable
+- Made analytics-based scheduling the default mode
+
+#### v1.3.0
 
 **New Features:**
 - **Excel Archiving**: Added automatic archiving of old entries to archive sheets to keep main sheets manageable

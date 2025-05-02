@@ -24,13 +24,16 @@ UPLOAD_CATEGORY=Gaming  # YouTube category for uploads
 # --- Scheduling Settings ---
 
 # Mode for scheduling uploads. Options:
-#   default_interval = Publish first video now, schedule subsequent videos at fixed interval.
-#   custom_tomorrow  = Try custom schedule times from config (for tomorrow onwards), then use fixed interval fallback. NO immediate publish.
-SCHEDULING_MODE=custom_tomorrow
+#   analytics_priority = Automatically schedule videos during peak viewer hours based on YouTube Analytics data.
+#   default_interval   = Publish first video now, schedule subsequent videos at fixed interval.
+#   custom_tomorrow    = Try custom schedule times from config (for tomorrow onwards), then use fixed interval fallback.
+SCHEDULING_MODE=analytics_priority
 
-# Fixed interval (in minutes) used for scheduling in 'default_interval' mode
-# AND as the fallback interval in 'custom_tomorrow' mode when custom slots are exhausted/invalid.
-SCHEDULE_INTERVAL_MINUTES=240
+# Fallback interval (in minutes) used when:
+# - analytics_priority mode can't find a suitable peak hour
+# - default_interval mode for all videos after the first
+# - custom_tomorrow mode when custom slots are exhausted/invalid
+SCHEDULE_INTERVAL_MINUTES=120
 
 # List of preferred schedule times (HH:MM AM/PM format, comma-separated) for 'custom_tomorrow' mode.
 # The script will try to use these times sequentially for videos in a run, always targeting TOMORROW's date or later.
@@ -39,6 +42,20 @@ CUSTOM_SCHEDULE_TIMES=6:00 AM, 9:00 AM, 11:30 AM, 3:00 PM, 6:00 PM, 10:00 PM
 # Minimum number of minutes ahead of the current time a video can be scheduled.
 # Prevents scheduling too close to the current time, which YouTube might reject.
 MIN_SCHEDULE_AHEAD_MINUTES=20
+
+# --- Analytics-Based Scheduling Settings ---
+# These settings apply to the analytics_priority mode
+
+# Number of days of analytics data to analyze for determining peak hours
+ANALYTICS_DAYS_TO_ANALYZE=7
+
+# Number of peak hours to identify from analytics data (1-24)
+# Higher values include more hours but may dilute the focus on truly peak times
+ANALYTICS_PEAK_HOURS_COUNT=5
+
+# How long to cache analytics data before refreshing (in hours)
+# Lower values provide more up-to-date data but increase API calls
+ANALYTICS_CACHE_EXPIRY_HOURS=24
 
 # Browser Profile
 # Path to Firefox profile directory. Create a dedicated profile for YouTube uploads.

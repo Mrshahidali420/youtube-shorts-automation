@@ -7,7 +7,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
     name="youtube-shorts-automation",
-    version="1.3.0",
+    version="1.4.0",
     description="A suite of tools for automating YouTube Shorts creation and management",
     long_description=long_description,
     long_description_content_type="text/markdown",

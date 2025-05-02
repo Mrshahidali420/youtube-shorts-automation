@@ -22,6 +22,19 @@ except ImportError:
     print("To enable, install with: pip install google-generativeai")
     genai = None
 
+# Google API imports for YouTube Analytics
+try:
+    import pickle
+    from google_auth_oauthlib.flow import InstalledAppFlow
+    from google.auth.transport.requests import Request
+    from googleapiclient.discovery import build
+    from googleapiclient.errors import HttpError
+    GOOGLE_API_AVAILABLE = True
+except ImportError:
+    print("Warning: Google API libraries not found. Install with:")
+    print("pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib")
+    GOOGLE_API_AVAILABLE = False
+
 # --- Colorama Setup ---
 try:
     import colorama
@@ -120,7 +133,19 @@ PERFORMANCE_METRICS_FILE = os.path.join(script_directory, "performance_metrics.j
 UPLOADER_ANALYSIS_LOG = os.path.join(script_directory, "uploader_analysis_log.txt") # For AI-generated analysis
 UPLOAD_CORRELATION_CACHE_FILENAME = "upload_correlation_cache.json" # For tracking correlation between video index, discovery keyword, and YouTube Video ID
 UPLOAD_CORRELATION_CACHE_PATH = os.path.join(script_directory, UPLOAD_CORRELATION_CACHE_FILENAME)
+ANALYTICS_PEAK_TIMES_CACHE_FILENAME = "analytics_peak_times_cache.json" # For caching peak viewer hours from YouTube Analytics
+ANALYTICS_PEAK_TIMES_CACHE_PATH = os.path.join(script_directory, ANALYTICS_PEAK_TIMES_CACHE_FILENAME)
 # --- End Path Definitions ---
+
+# --- YouTube API Authentication Constants ---
+CLIENT_SECRETS_FILE = os.path.join(script_directory, "client_secret.json")
+TOKEN_FILE = os.path.join(script_directory, "token.json")
+# Scopes for YouTube API access - includes both Data API and Analytics API
+SCOPES = [
+    "https://www.googleapis.com/auth/youtube.readonly",
+    "https://www.googleapis.com/auth/yt-analytics.readonly"
+]
+# --- End YouTube API Authentication Constants ---
 
 # --- Error Types and Analysis Constants ---
 ERROR_TYPES = {
@@ -328,6 +353,89 @@ def add_to_correlation_cache(video_index_str, discovery_keyword, youtube_video_i
     except Exception as e:
         print_error(f"Error adding to correlation cache: {e}")
 
+def get_authenticated_service():
+    """
+    Authenticates with the YouTube Data API and Analytics API using OAuth2 run_local_server flow.
+    Opens the default browser on the first run.
+
+    Returns:
+        A YouTube API service object or None if authentication fails.
+    """
+    if not GOOGLE_API_AVAILABLE:
+        print_error("Google API libraries not available. Cannot authenticate.")
+        return None
+
+    creds = None
+    # The file token.json stores the user's access and refresh tokens, and is
+    # created automatically when the authorization flow completes for the first time.
+    if os.path.exists(TOKEN_FILE):
+        print_info(f"Attempting to load cached credentials from: {TOKEN_FILE}")
+        try:
+            with open(TOKEN_FILE, 'rb') as token:
+                creds = pickle.load(token)
+            print_success("Cached credentials loaded.")
+        except Exception as e:
+             print_warning(f"Failed to load cached credentials: {e}. Will re-authenticate.")
+             creds = None # Reset creds if loading fails
+
+    # If there are no valid credentials available, either refresh or log in.
+    if not creds or not creds.valid:
+        if creds and creds.expired and creds.refresh_token:
+            print_info("Cached credentials expired. Attempting to refresh...")
+            try:
+                creds.refresh(Request())
+                print_success("Credentials refreshed successfully.")
+            except Exception as e:
+                print_warning(f"Failed to refresh credentials: {e}. Will perform new authentication flow.")
+                creds = None # Reset if refresh fails
+        else:
+            print_info("No valid cached credentials found or refresh failed. Starting new authentication flow.")
+            if not os.path.exists(CLIENT_SECRETS_FILE):
+                 print_error(f"FATAL: Client secrets file not found at: {CLIENT_SECRETS_FILE}")
+                 print_error("Please download 'client_secret.json' from Google Cloud Console and place it in the script directory.")
+                 return None # Fatal error, cannot authenticate
+
+            print_info("Using standard local server OAuth flow. Opening default browser...")
+            print_info("NOTE: You will need to grant permission for YouTube Analytics access.")
+
+            try:
+                flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS_FILE, SCOPES)
+                # This line opens the browser and starts a local server to listen for the redirect
+                creds = flow.run_local_server(port=0) # port=0 lets the OS choose a free port
+                print_success("Authentication flow completed via browser.")
+
+            except Exception as e:
+                print_error(f"An error occurred during the automatic authentication flow: {e}", include_traceback=True)
+                print_error("Authentication failed.")
+                return None
+
+        # Save the credentials for the next run
+        if creds and creds.valid:
+            try:
+                with open(TOKEN_FILE, 'wb') as token:
+                    pickle.dump(creds, token)
+                print_success(f"New credentials saved to: {TOKEN_FILE}")
+            except Exception as e:
+                 print_warning(f"Failed to save credentials to {TOKEN_FILE}: {e}")
+
+    # Build the API service object
+    if creds and creds.valid:
+        try:
+            service = build('youtube', 'v3', credentials=creds)
+            print_success("YouTube Data API service built successfully.")
+            return service
+        except HttpError as e:
+            print_error(f"API error building service: {e}")
+            print_error("API service initialization failed.")
+            return None
+        except Exception as e:
+            print_error(f"An unexpected error occurred while building the API service: {e}", include_traceback=True)
+            print_error("API service initialization failed.")
+            return None
+    else:
+        print_error("Authentication did not result in valid credentials. API service not built.")
+        return None
+
 def analyze_upload_errors_with_gemini():
     """Analyzes upload errors using Gemini AI and generates suggestions for improvement.
 
@@ -442,6 +550,133 @@ def print_fatal(message: str, indent: int = 0, log_to_file: bool = True, include
 def print_config(key: str, value: any): print(f"  {Fore.MAGENTA}{key:<28}:{Style.RESET_ALL} {Style.BRIGHT}{value}{Style.RESET_ALL}")
 # --- End Logging Helper Functions ---
 
+# --- YouTube Analytics API Functions ---
+def load_peak_times_cache() -> Optional[Dict]:
+    """Loads peak times data from cache."""
+    if not os.path.exists(ANALYTICS_PEAK_TIMES_CACHE_PATH):
+        return None
+    try:
+        with open(ANALYTICS_PEAK_TIMES_CACHE_PATH, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        # Basic validation
+        if isinstance(data, dict) and "timestamp" in data and "peak_hours" in data:
+            return data
+        else:
+            print_warning("Invalid format in peak times cache file.")
+            return None
+    except Exception as e:
+        print_error(f"Error loading peak times cache: {e}")
+        return None
+
+def save_peak_times_cache(peak_hours: List[int]):
+    """Saves peak times data and timestamp to cache."""
+    data = {
+        "timestamp": datetime.now().isoformat(),
+        "peak_hours": peak_hours
+    }
+    try:
+        with open(ANALYTICS_PEAK_TIMES_CACHE_PATH, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=4)
+        print_success(f"Saved peak times to cache: {ANALYTICS_PEAK_TIMES_CACHE_PATH}")
+    except Exception as e:
+        print_error(f"Error saving peak times cache: {e}")
+
+def get_peak_viewer_hours_from_api(service: Any, days_back: int, num_peak_hours: int) -> Optional[List[int]]:
+    """
+    Queries YouTube Analytics API to find the top N peak viewer hours.
+
+    Args:
+        service: Authenticated YouTube Analytics API service object.
+        days_back: How many days of data to analyze.
+        num_peak_hours: How many top hours to return.
+
+    Returns:
+        A list of peak hours (0-23) or None if an error occurs.
+    """
+    if not service:
+        print_error("Analytics API service not available for peak time query.")
+        return None
+
+    print_info(f"Querying YouTube Analytics for peak hours over last {days_back} days...")
+
+    end_date = datetime.now().date() - timedelta(days=1) # Use data up to yesterday
+    start_date = end_date - timedelta(days=days_back - 1)
+    start_date_str = start_date.strftime('%Y-%m-%d')
+    end_date_str = end_date.strftime('%Y-%m-%d')
+
+    try:
+        # Build the analytics service using the same credentials
+        analytics = build('youtubeAnalytics', 'v2', credentials=service._credentials)
+
+        response = analytics.reports().query(
+            ids='channel==MINE',
+            startDate=start_date_str,
+            endDate=end_date_str,
+            metrics='views',
+            dimensions='hour',
+            sort='-views', # Sort by views descending
+            maxResults=24 # Ensure we get all hours if possible
+        ).execute()
+
+        if 'rows' not in response:
+            print_warning("No data rows returned from Analytics API.")
+            return None
+
+        hourly_views = {}
+        for row in response['rows']:
+            try:
+                hour = int(row[0])
+                views = int(row[1])
+                hourly_views[hour] = views
+            except (IndexError, ValueError, TypeError):
+                print_warning(f"Skipping invalid row in Analytics response: {row}")
+                continue
+
+        if not hourly_views:
+            print_warning("Could not parse any valid hourly view data from API.")
+            return None
+
+        # Sort hours by views descending
+        sorted_hours = sorted(hourly_views.items(), key=lambda item: item[1], reverse=True)
+
+        # Get the top N peak hours
+        peak_hours = [hour for hour, views in sorted_hours[:num_peak_hours]]
+        peak_hours.sort() # Sort numerically for easier checking
+
+        print_success(f"Identified top {len(peak_hours)} peak hours: {peak_hours}")
+        return peak_hours
+
+    except HttpError as e:
+        print_error(f"YouTube Analytics API error: {e}", include_traceback=True)
+        log_error_to_file(f"Analytics API HttpError: {e}", include_traceback=True)
+        return None
+    except Exception as e:
+        print_error(f"Unexpected error querying Analytics API: {e}", include_traceback=True)
+        log_error_to_file(f"Unexpected error querying Analytics API: {e}", include_traceback=True)
+        return None
+
+def is_peak_time(dt_object: datetime, peak_hours_list: List[int]) -> bool:
+    """Checks if a given datetime's hour is in the list of peak hours."""
+    if not peak_hours_list:
+        return False
+    current_hour = dt_object.hour # Get hour (0-23)
+    return current_hour in peak_hours_list
+
+def is_peak_time_manual(dt_object: datetime, peak_slots: List[Tuple[dt_time, dt_time]]) -> bool:
+    """Checks if a given datetime falls within manually defined peak time slots."""
+    if not peak_slots:
+        return False
+    current_time = dt_object.time()
+    for start, end in peak_slots:
+        if start <= end: # Normal range (e.g., 08:00-11:00)
+            if start <= current_time <= end:
+                return True
+        else: # Overnight range (e.g., 22:00-02:00)
+            if current_time >= start or current_time <= end:
+                return True
+    return False
+# --- End YouTube Analytics API Functions ---
+
 # --- Configuration Loading ---
 config = {}
 try:
@@ -471,13 +706,13 @@ upload_category = config.get("UPLOAD_CATEGORY", _DEFAULT_CATEGORY).strip()
 profile_path_config = config.get("PROFILE_PATH")
 
 # --- Scheduling Mode Settings ---
-_DEFAULT_SCHEDULING_MODE = "default_interval"
+_DEFAULT_SCHEDULING_MODE = "analytics_priority"  # Changed default to analytics_priority
 _DEFAULT_SCHEDULE_INTERVAL = 120
 _DEFAULT_MIN_SCHEDULE_AHEAD = 20
 _DEFAULT_CUSTOM_TIMES_STR = "9:00 AM, 3:00 PM" # Example default if setting is missing
 
 scheduling_mode = config.get("SCHEDULING_MODE", _DEFAULT_SCHEDULING_MODE).strip().lower()
-if scheduling_mode not in ["default_interval", "custom_tomorrow"]:
+if scheduling_mode not in ["default_interval", "custom_tomorrow", "analytics_priority"]:
     print_warning(f"Invalid SCHEDULING_MODE '{scheduling_mode}'. Using default: '{_DEFAULT_SCHEDULING_MODE}'")
     scheduling_mode = _DEFAULT_SCHEDULING_MODE
 
@@ -517,6 +752,42 @@ try:
 except (ValueError, TypeError, AssertionError):
     print_warning(f"Invalid MIN_SCHEDULE_AHEAD_MINUTES. Using default: {_DEFAULT_MIN_SCHEDULE_AHEAD}")
     min_schedule_ahead_minutes = _DEFAULT_MIN_SCHEDULE_AHEAD
+
+# --- Analytics-Based Scheduling Settings ---
+_DEFAULT_ANALYTICS_DAYS = 7
+_DEFAULT_ANALYTICS_PEAK_HOURS = 5  # Default to top 5 hours
+_DEFAULT_ANALYTICS_CACHE_HOURS = 24
+
+# Enable/disable analytics-based scheduling
+# Default to true if in analytics_priority mode, otherwise use config value
+enable_analytics_scheduling = True if scheduling_mode == 'analytics_priority' else config.get("ENABLE_ANALYTICS_SCHEDULING", "false").strip().lower() == 'true'
+
+# Days of analytics data to analyze
+try:
+    analytics_days_to_analyze = int(config.get("ANALYTICS_DAYS_TO_ANALYZE", _DEFAULT_ANALYTICS_DAYS))
+    assert analytics_days_to_analyze > 0
+except (ValueError, TypeError, AssertionError):
+    print_warning(f"Invalid ANALYTICS_DAYS_TO_ANALYZE. Using default: {_DEFAULT_ANALYTICS_DAYS}")
+    analytics_days_to_analyze = _DEFAULT_ANALYTICS_DAYS
+
+# Number of peak hours to identify
+try:
+    analytics_peak_hours_count = int(config.get("ANALYTICS_PEAK_HOURS_COUNT", _DEFAULT_ANALYTICS_PEAK_HOURS))
+    assert 0 < analytics_peak_hours_count <= 24
+except (ValueError, TypeError, AssertionError):
+    print_warning(f"Invalid ANALYTICS_PEAK_HOURS_COUNT. Using default: {_DEFAULT_ANALYTICS_PEAK_HOURS}")
+    analytics_peak_hours_count = _DEFAULT_ANALYTICS_PEAK_HOURS
+
+# How long to cache analytics data
+try:
+    analytics_cache_expiry_hours = int(config.get("ANALYTICS_CACHE_EXPIRY_HOURS", _DEFAULT_ANALYTICS_CACHE_HOURS))
+    assert analytics_cache_expiry_hours > 0
+except (ValueError, TypeError, AssertionError):
+    print_warning(f"Invalid ANALYTICS_CACHE_EXPIRY_HOURS. Using default: {_DEFAULT_ANALYTICS_CACHE_HOURS}")
+    analytics_cache_expiry_hours = _DEFAULT_ANALYTICS_CACHE_HOURS
+
+# --- End Analytics-Based Scheduling Settings ---
+
 # --- End Scheduling Mode Settings ---
 
 # --- Debug Recording Settings ---
@@ -1842,13 +2113,27 @@ def main():
         print_config("Tag Char Limit", cfg_tag_limit)
         print_config("Total Tag Chars Limit", cfg_total_tags_limit)
         print_config("Max Tags Count", cfg_max_tags_count)
+
         # --- Print Scheduling Config ---
         print_config("Scheduling Mode", scheduling_mode)
-        print_config("Schedule Interval (mins)", schedule_interval_minutes)
-        if scheduling_mode == 'custom_tomorrow':
+        if scheduling_mode == 'analytics_priority':
+            print_config("-> Analytics Enabled", f"{Fore.GREEN}True{Style.RESET_ALL}")
+            print_config("-> Analytics Days", analytics_days_to_analyze)
+            print_config("-> Analytics Peak Hours", analytics_peak_hours_count)
+            print_config("-> Analytics Cache (Hrs)", analytics_cache_expiry_hours)
+        elif scheduling_mode == 'custom_tomorrow':
             custom_times_display = ", ".join([t.strftime('%I:%M %p') for t in parsed_config_times]) if parsed_config_times else "None"
             print_config("Custom Schedule Times", custom_times_display)
+        print_config("Fallback Interval (mins)", schedule_interval_minutes)
         print_config("Min Schedule Ahead (mins)", min_schedule_ahead_minutes)
+
+        # Print analytics config if enabled but not in analytics_priority mode
+        if enable_analytics_scheduling and scheduling_mode != 'analytics_priority':
+            print_config("Analytics Scheduling", f"{Fore.GREEN}Enabled{Style.RESET_ALL}")
+            print_config("-> Analytics Days", analytics_days_to_analyze)
+            print_config("-> Analytics Peak Hours", analytics_peak_hours_count)
+            print_config("-> Analytics Cache (Hrs)", analytics_cache_expiry_hours)
+
         # --- Print Recording Config ---
         print_config("Enable Debug Recording", f"{Fore.GREEN}{enable_debug_recording}{Style.RESET_ALL}" if enable_debug_recording else f"{Fore.YELLOW}{enable_debug_recording}{Style.RESET_ALL}")
         if enable_debug_recording:
@@ -1996,6 +2281,53 @@ def main():
             print_warning("Excel archiving skipped: excel_utils module not available", indent=1)
         # --- End Excel Archiving ---
 
+        # --- YouTube Analytics API Integration for Dynamic Scheduling ---
+        service = None
+        peak_hours_from_analytics = []  # Initialize empty list for peak hours
+
+        if enable_analytics_scheduling:
+            print_section_header("Fetching/Loading Peak Viewer Times")
+            cached_data = load_peak_times_cache()
+            cache_is_fresh = False
+
+            if cached_data:
+                try:
+                    cache_timestamp = datetime.fromisoformat(cached_data["timestamp"])
+                    if datetime.now() - cache_timestamp < timedelta(hours=analytics_cache_expiry_hours):
+                        peak_hours_from_analytics = cached_data["peak_hours"]
+                        cache_is_fresh = True
+                        print_info(f"Using fresh peak hours data from cache (cached {cache_timestamp.strftime('%Y-%m-%d %H:%M')})")
+                        print_info(f"Peak hours: {peak_hours_from_analytics}", indent=1)
+                    else:
+                        print_info("Peak times cache expired. Will fetch fresh data.")
+                except Exception as e:
+                    print_warning(f"Error processing peak times cache timestamp: {e}. Will refetch.")
+
+            if not cache_is_fresh:
+                print_info("Attempting to fetch fresh peak times from YouTube Analytics API...")
+                if not GOOGLE_API_AVAILABLE:
+                    print_warning("Google API libraries not available. Cannot fetch peak times.")
+                    print_info("Install with: pip install google-api-python-client google-auth-httplib2 google-auth-oauthlib")
+                else:
+                    # Authenticate with YouTube API
+                    print_info("Authenticating with Google API (includes Analytics scope)...")
+                    service = get_authenticated_service()
+
+                    if service:
+                        fetched_hours = get_peak_viewer_hours_from_api(
+                            service,
+                            analytics_days_to_analyze,
+                            analytics_peak_hours_count
+                        )
+                        if fetched_hours is not None:  # Check if fetch was successful
+                            peak_hours_from_analytics = fetched_hours
+                            save_peak_times_cache(peak_hours_from_analytics)
+                        else:
+                            print_warning("Failed to fetch peak hours from API. Dynamic scheduling might use default intervals.")
+                    else:
+                        print_error("YouTube API service could not be authenticated. Cannot fetch peak times.")
+        # --- End YouTube Analytics API Integration ---
+
         uploaded_count = 0
         # --- Scheduling Tracking Variables ---
         last_schedule_time: Optional[datetime] = None # Tracks the last successfully calculated schedule time for interval calc
@@ -2050,36 +2382,47 @@ def main():
             now = datetime.now()
             min_future_time = now + timedelta(minutes=min_schedule_ahead_minutes)
             tomorrow_date = now.date() + timedelta(days=1) # Calculate tomorrow's date
+            base_time = last_schedule_time if last_schedule_time else now # Use last schedule or now as base
 
             print_info(f"Determining schedule for video {video_index} using mode: '{scheduling_mode}'", indent=2)
 
-            if scheduling_mode == 'default_interval':
-                # --- Mode A Logic ---
+            # --- Strategy 1: Analytics Priority Scheduling ---
+            if scheduling_mode == 'analytics_priority' and enable_analytics_scheduling and peak_hours_from_analytics:
+                print_info(f"Attempting to schedule in peak hours: {peak_hours_from_analytics}", indent=3)
+                found_peak_slot = False
+                # Start checking from base_time onwards
+                check_time = base_time
+                # Limit search to avoid infinite loops (search next 48 hours)
+                max_search_time = now + timedelta(hours=48)
+
+                while check_time < max_search_time:
+                    # Increment check_time by 15 minutes until a peak hour is found
+                    check_time += timedelta(minutes=15)
+                    if check_time.hour in peak_hours_from_analytics:
+                        # Found a potential peak hour slot
+                        # Ensure it's far enough in the future
+                        if check_time >= min_future_time:
+                            target_schedule_time = check_time
+                            action_desc = f"Schedule (Peak Hour - API) for {target_schedule_time:%Y-%m-%d %H:%M:%S}"
+                            found_peak_slot = True
+                            print_info(f"Found suitable peak slot: {target_schedule_time:%Y-%m-%d %H:%M:%S}", indent=4)
+                            break # Exit the while loop
+
+                if not found_peak_slot:
+                    print_warning("Could not find a suitable future peak hour slot within search window. Using fallback interval.", indent=3)
+                    # Fall through to fallback logic below
+
+            # --- Strategy 2: Default Interval Mode ---
+            elif scheduling_mode == 'default_interval':
                 if first_video_this_run:
                     publish_this_video_now = True
-                    action_desc = "Publish Now (Mode A - First Video)"
-                    # last_schedule_time remains None for the first published video
-                else:
-                    publish_this_video_now = False
-                    # Calculate schedule time based on interval
-                    if last_schedule_time is None:
-                        # First video *to be scheduled* in Mode A. Base interval off 'now'.
-                        calculated_time = now + timedelta(minutes=schedule_interval_minutes)
-                    else:
-                        # Schedule relative to the previous scheduled video
-                        calculated_time = last_schedule_time + timedelta(minutes=schedule_interval_minutes)
+                    action_desc = "Publish Now (First Video - Default Interval Mode)"
+                    # No need to set target_schedule_time when publishing immediately
+                # If not first video, fall through to fallback interval logic below
 
-                    # Ensure calculated time is valid (sufficiently in the future)
-                    target_schedule_time = max(calculated_time, min_future_time)
-                    action_desc = f"Schedule Interval (Mode A) for {target_schedule_time:%Y-%m-%d %H:%M:%S}"
-                    last_schedule_time = target_schedule_time # Update for the next interval calculation
-
+            # --- Strategy 3: Custom Tomorrow Mode ---
             elif scheduling_mode == 'custom_tomorrow':
-                # --- Mode B Logic (Custom Time -> Interval Fallback) ---
-                publish_this_video_now = False # Never publish immediately
-                schedule_reason = ""
-
-                # 1. Try Custom Config Time Slot (ALWAYS for TOMORROW onwards)
+                # Try Custom Config Time Slot (ALWAYS for TOMORROW onwards)
                 if remaining_config_times:
                     current_config_time_slot = remaining_config_times[0]
                     print_info(f"Attempting to use config time slot: {current_config_time_slot.strftime('%I:%M %p')} starting from tomorrow ({tomorrow_date:%Y-%m-%d})", indent=3)
@@ -2092,36 +2435,43 @@ def main():
                         print_info(f"Valid schedule found for tomorrow using config slot: {target_schedule_time:%Y-%m-%d %H:%M:%S}", indent=4)
 
                     if is_valid:
-                        schedule_reason = f"Config Time Slot for Tomorrow ({target_schedule_time:%I:%M %p on %Y-%m-%d})"
+                        action_desc = f"Schedule (Custom Time Slot) for {target_schedule_time:%Y-%m-%d %H:%M:%S}"
                         remaining_config_times.pop(0) # Consume this time slot
                         print_info(f"Consumed time slot. {len(remaining_config_times)} slots remaining.", indent=4)
                     else:
-                         print_warning(f"Config time slot {current_config_time_slot.strftime('%I:%M %p')} for tomorrow ({potential_schedule_tomorrow:%Y-%m-%d %H:%M:%S}) is invalid (too soon or conflicts with last schedule). Trying interval fallback.", indent=4)
-                         # DO NOT consume the time slot if it wasn't valid
+                        print_warning(f"Config time slot {current_config_time_slot.strftime('%I:%M %p')} for tomorrow ({potential_schedule_tomorrow:%Y-%m-%d %H:%M:%S}) is invalid (too soon or conflicts with last schedule). Trying interval fallback.", indent=4)
+                        # DO NOT consume the time slot if it wasn't valid
+                # If no valid custom slot found, fall through to fallback interval logic below
 
-                # 2. Fallback to Interval Scheduling
-                if target_schedule_time is None:
-                    print_info("Trying 'Interval Fallback' rule.", indent=3)
-                    if last_schedule_time is None:
-                        # First video in Mode B to use interval (or custom slots failed). Base interval off 'now'.
-                        calculated_time = now + timedelta(minutes=schedule_interval_minutes)
-                    else:
-                        # Schedule relative to the last valid schedule time (custom or previous interval)
-                        calculated_time = last_schedule_time + timedelta(minutes=schedule_interval_minutes)
+            # --- Fallback Interval Logic (for all modes if needed) ---
+            if not publish_this_video_now and target_schedule_time is None:
+                print_info("Using fallback interval scheduling.", indent=3)
+                # Calculate next slot using the fallback interval
+                calculated_time = base_time + timedelta(minutes=schedule_interval_minutes)
+                target_schedule_time = max(calculated_time, min_future_time)
 
-                    # Ensure calculated time is valid
-                    target_schedule_time = max(calculated_time, min_future_time)
-                    schedule_reason = f"Interval Fallback ({target_schedule_time:%Y-%m-%d %H:%M:%S})"
-                    print_info(f"Valid schedule found using Interval rule: {target_schedule_time:%Y-%m-%d %H:%M:%S}", indent=4)
+                # Set appropriate action description based on mode
+                if scheduling_mode == 'analytics_priority':
+                    action_desc = f"Schedule (Analytics Fallback) for {target_schedule_time:%Y-%m-%d %H:%M:%S}"
+                elif scheduling_mode == 'default_interval':
+                    action_desc = f"Schedule (Default Interval) for {target_schedule_time:%Y-%m-%d %H:%M:%S}"
+                elif scheduling_mode == 'custom_tomorrow':
+                    action_desc = f"Schedule (Custom Mode Fallback) for {target_schedule_time:%Y-%m-%d %H:%M:%S}"
 
-                # Final assignment and update last_schedule_time for Mode B
-                if target_schedule_time:
-                    last_schedule_time = target_schedule_time # Update for next interval calc
-                    action_desc = f"Schedule (Mode B - Reason: {schedule_reason})"
-                else:
-                    # This case should ideally not happen if interval fallback works, but handle defensively
-                    print_error(f"FATAL: Could not determine any valid schedule time for video {video_index} in Mode B. Skipping upload.", indent=2)
-                    continue # Skip this video
+                print_info(f"Using fallback interval. Next slot: {target_schedule_time:%Y-%m-%d %H:%M:%S}", indent=3)
+
+            # --- Final Validation ---
+            if not publish_this_video_now and target_schedule_time is None:
+                # This should not happen if logic is correct, but is a failsafe
+                print_error(f"Could not determine schedule time for video {video_index}. Skipping upload.", indent=2)
+                continue # Skip to next video in the main loop
+
+            # Update tracking variables
+            if target_schedule_time:
+                last_schedule_time = target_schedule_time # Update for next video
+
+            if first_video_this_run and publish_this_video_now:
+                first_video_this_run = False # Mark first video as done
 
             # --- End Scheduling Logic ---
 
