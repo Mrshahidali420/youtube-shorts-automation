@@ -1,5 +1,7 @@
 # Config and sensitive files
 config.txt
+channels.txt
+niche.txt
 *.key
 *.pem
 *.cert
@@ -34,15 +36,33 @@ __pycache__/
 .coverage
 htmlcov/
 
+# Generated data files
+generated_keywords_cache.json
+playlist_cache.json
+metadata_metrics.json
+performance_metrics.json
+upload_correlation_cache.json
+tuning_suggestions.log
+
 # Excel files with data
 *.xlsx
 
 # Log files
 *.log
+*_log.txt
+*error_log.txt
+uploader_analysis_log.txt
+performance_tracker_error_log.txt
 
 # Archive files
 *.rar
 *.zip
+
+# Backup files
+backups/
+*.bak
+*~
+*.backup
 
 # Distribution / packaging
 dist/
@@ -59,3 +79,12 @@ env/
 .idea/
 *.swp
 *.swo
+pyrightconfig.json
+.pyright
+.pylintrc
+.flake8
+.mypy_cache/
+
+# Documentation and help files
+HOW TO SETUP.docx
+--help/
