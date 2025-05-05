@@ -1,4 +1,17 @@
+#!/usr/bin/env python3
 # -*- coding: utf-8 -*-
+"""
+Channel-Based Downloader for YouTube Shorts Automation
+
+This module provides functionality to download short-form videos from specific
+YouTube channels, with SEO optimization and proper attribution to original creators.
+
+Copyright (c) 2023-2025 Shahid Ali
+License: MIT License
+GitHub: https://github.com/Mrshahidali420/youtube-shorts-automation
+Version: 1.5.0
+"""
+
 import os
 import json
 import yt_dlp
@@ -86,13 +99,14 @@ YT_PLAYLIST_FETCH_LIMIT = 50 # How many videos to initially check per channel (i
 MAX_SHORT_DURATION = 61 # Max video duration in seconds
 
 # Gemini Settings
-METADATA_TIMEOUT_SECONDS = 30
+# METADATA_TIMEOUT_SECONDS is now loaded from config.txt
 DEFAULT_UPLOADER_NAME = "Unknown Uploader"
 
 # Metadata improvement settings
+# Default values for metadata quality thresholds (will be overridden by config if available)
 METADATA_ERROR_THRESHOLD = 0.15
 METADATA_TIMEOUT_THRESHOLD = 0.10
-VALIDATION_WARNING_THRESHOLD = 0.20 # Validation warning threshold to trigger prompt improvement (20%)
+VALIDATION_WARNING_THRESHOLD = 0.20
 MAX_ERROR_SAMPLES = 5
 
 # Parameter tuning settings
@@ -226,6 +240,41 @@ elif not os.path.exists(ffmpeg_path):
     print_warning("Ensure ffmpeg.exe is in the script directory or set FFMPEG_PATH in config.txt")
     ffmpeg_path = "ffmpeg" # Fallback to hoping it's in system PATH
 
+# METADATA_TIMEOUT_SECONDS (Optional with Default)
+METADATA_TIMEOUT_SECONDS = 15  # Default value
+try:
+    METADATA_TIMEOUT_SECONDS = int(config.get("METADATA_TIMEOUT_SECONDS", METADATA_TIMEOUT_SECONDS))
+except (ValueError, TypeError):
+    print_warning(f"Invalid METADATA_TIMEOUT_SECONDS. Using default: {METADATA_TIMEOUT_SECONDS}")
+if METADATA_TIMEOUT_SECONDS <= 0:
+    METADATA_TIMEOUT_SECONDS = 15
+    print_warning(f"METADATA_TIMEOUT_SECONDS must be positive. Using default: 15")
+
+# Load metadata quality thresholds from config (with defaults)
+try:
+    METADATA_ERROR_THRESHOLD = float(config.get("METADATA_ERROR_THRESHOLD", METADATA_ERROR_THRESHOLD))
+    if not (0 < METADATA_ERROR_THRESHOLD < 1):
+        print_warning(f"METADATA_ERROR_THRESHOLD must be between 0 and 1. Using default: {METADATA_ERROR_THRESHOLD}")
+        METADATA_ERROR_THRESHOLD = 0.15
+except (ValueError, TypeError):
+    print_warning(f"Invalid METADATA_ERROR_THRESHOLD. Using default: {METADATA_ERROR_THRESHOLD}")
+
+try:
+    METADATA_TIMEOUT_THRESHOLD = float(config.get("METADATA_TIMEOUT_THRESHOLD", METADATA_TIMEOUT_THRESHOLD))
+    if not (0 < METADATA_TIMEOUT_THRESHOLD < 1):
+        print_warning(f"METADATA_TIMEOUT_THRESHOLD must be between 0 and 1. Using default: {METADATA_TIMEOUT_THRESHOLD}")
+        METADATA_TIMEOUT_THRESHOLD = 0.10
+except (ValueError, TypeError):
+    print_warning(f"Invalid METADATA_TIMEOUT_THRESHOLD. Using default: {METADATA_TIMEOUT_THRESHOLD}")
+
+try:
+    VALIDATION_WARNING_THRESHOLD = float(config.get("VALIDATION_WARNING_THRESHOLD", VALIDATION_WARNING_THRESHOLD))
+    if not (0 < VALIDATION_WARNING_THRESHOLD < 1):
+        print_warning(f"VALIDATION_WARNING_THRESHOLD must be between 0 and 1. Using default: {VALIDATION_WARNING_THRESHOLD}")
+        VALIDATION_WARNING_THRESHOLD = 0.20
+except (ValueError, TypeError):
+    print_warning(f"Invalid VALIDATION_WARNING_THRESHOLD. Using default: {VALIDATION_WARNING_THRESHOLD}")
+
 # Other settings
 MAX_TITLE_LENGTH = 100 # From keyword downloader
 TARGET_TITLE_LENGTH = 90 # From keyword downloader
@@ -233,6 +282,8 @@ SHORTS_SUFFIX = " #Shorts" # From keyword downloader
 
 print_success("Configuration loaded.")
 print(f"Settings: Max Downloads={max_downloads}, SEO Channel='{seo_channel_name}', Topic='{seo_channel_topic}'")
+print(f"Metadata Settings: Timeout={METADATA_TIMEOUT_SECONDS}s")
+print(f"Metadata Quality Thresholds: Error={METADATA_ERROR_THRESHOLD:.1%}, Timeout={METADATA_TIMEOUT_THRESHOLD:.1%}, Validation={VALIDATION_WARNING_THRESHOLD:.1%}")
 
 # Configure Gemini API
 try:
@@ -290,14 +341,45 @@ def load_metadata_metrics():
         if os.path.exists(metadata_metrics_file_path):
             with open(metadata_metrics_file_path, "r", encoding="utf-8") as f:
                 metrics = json.load(f)
+
+            # Explicitly add validation keys if they don't exist
+            if "validation_title_mismatches" not in metrics:
+                metrics["validation_title_mismatches"] = 0
+                print_info("Added missing validation_title_mismatches key to metadata metrics")
+
+            if "validation_tag_list_errors" not in metrics:
+                metrics["validation_tag_list_errors"] = 0
+                print_info("Added missing validation_tag_list_errors key to metadata metrics")
+
+            if "validation_keyword_stuffing" not in metrics:
+                metrics["validation_keyword_stuffing"] = 0
+                print_info("Added missing validation_keyword_stuffing key to metadata metrics")
+
+            # Ensure all other default keys exist in the loaded metrics
             for key, value in default_metrics.items():
-                metrics.setdefault(key, value)
+                if key not in metrics:
+                    metrics[key] = value
+                    print_info(f"Added missing {key} key to metadata metrics")
+
             return metrics
         else:
-            return default_metrics
+            # If file doesn't exist, create a new file with default metrics
+            print_info("Metadata metrics file not found. Creating new file with default values.")
+            with open(metadata_metrics_file_path, "w", encoding="utf-8") as f:
+                json.dump(default_metrics, f, ensure_ascii=False, indent=4)
+            return default_metrics.copy()
     except Exception as e:
         print_warning(f"Error loading metadata metrics: {e}. Using default values.")
-        return default_metrics
+        # Create a new file with default metrics
+        try:
+            with open(metadata_metrics_file_path, "w", encoding="utf-8") as f:
+                json.dump(default_metrics, f, ensure_ascii=False, indent=4)
+            print_info("Created new metadata metrics file with default values after error.")
+        except Exception as write_err:
+            print_error(f"Error creating new metadata metrics file: {write_err}")
+
+        # Return a copy of the default dictionary on error
+        return default_metrics.copy()
 
 def save_metadata_metrics(metrics):
     """Saves metadata generation metrics to the JSON file."""
@@ -406,6 +488,9 @@ def validate_generated_metadata(metadata, video_title, metadata_metrics=None):
     if title_base and title_base not in description.lower():
         warnings.append(f"Generated title base ('{title_base[:50]}...') not found in description.")
         if metadata_metrics and not title_mismatch_detected:
+            # Ensure the key exists before incrementing
+            if "validation_title_mismatches" not in metadata_metrics:
+                metadata_metrics["validation_title_mismatches"] = 0
             metadata_metrics["validation_title_mismatches"] += 1
             title_mismatch_detected = True
 
@@ -439,6 +524,9 @@ def validate_generated_metadata(metadata, video_title, metadata_metrics=None):
         tags_listed_incorrectly = True
 
     if tags_listed_incorrectly and metadata_metrics and not tag_list_error_detected:
+        # Ensure the key exists before incrementing
+        if "validation_tag_list_errors" not in metadata_metrics:
+            metadata_metrics["validation_tag_list_errors"] = 0
         metadata_metrics["validation_tag_list_errors"] += 1
         tag_list_error_detected = True
 
@@ -457,6 +545,9 @@ def validate_generated_metadata(metadata, video_title, metadata_metrics=None):
                     if count > max_tag_word_occurrences:
                         warnings.append(f"Potential keyword stuffing: Word '{tag_word}' (from tag '{tag}') appears {count} times in description.")
                         if metadata_metrics and not stuffing_detected:
+                            # Ensure the key exists before incrementing
+                            if "validation_keyword_stuffing" not in metadata_metrics:
+                                metadata_metrics["validation_keyword_stuffing"] = 0
                             metadata_metrics["validation_keyword_stuffing"] += 1
                             stuffing_detected = True
                         break # Only report once per tag
@@ -1729,11 +1820,32 @@ def main():
 
             if not fetched_entries: continue # Skip if still no entries
 
-            # Sort and process entries
-            def get_view_count(entry):
-                try: return int(entry.get('view_count')) if entry.get('view_count') is not None else 0;
-                except: return 0
-            sorted_entries = sorted(fetched_entries, key=get_view_count, reverse=True)
+            # Use Smart Video Selection Algorithm if available
+            try:
+                import video_selector
+                print_info("Using Smart Video Selection Algorithm to select the best videos...")
+
+                # Preprocess entries for scoring
+                preprocessed_entries = video_selector.preprocess_yt_dlp_entries(fetched_entries)
+
+                # Select videos with diversity factor
+                diversity_factor = 0.2  # Balance between high scores and diversity
+                sorted_entries = video_selector.select_videos_with_diversity(
+                    preprocessed_entries,
+                    count=min(len(preprocessed_entries), max_downloads * 2),  # Select more than needed to allow for filtering
+                    diversity_factor=diversity_factor
+                )
+
+                # Log selection results
+                print_success(f"Smart Video Selection: Selected {len(sorted_entries)} videos from {len(fetched_entries)} candidates")
+
+            except ImportError:
+                # Fallback to traditional sorting if video_selector module is not available
+                print_warning("Smart Video Selection Algorithm not available. Using traditional view count sorting.")
+                def get_view_count(entry):
+                    try: return int(entry.get('view_count')) if entry.get('view_count') is not None else 0;
+                    except: return 0
+                sorted_entries = sorted(fetched_entries, key=get_view_count, reverse=True)
 
             # --- Video Loop ---
             for entry in sorted_entries:
@@ -1938,6 +2050,23 @@ def main():
                         else:
                             print_warning(f"Info file not found, skipping tag extraction: {info_json_path}", 3)
                         # --- End Tag Extraction ---
+
+                        # Update historical performance data for Smart Video Selection
+                        try:
+                            import video_selector
+                            # Create video data dictionary for historical performance update
+                            video_data = {
+                                "video_id": video_id,
+                                "title": original_title,
+                                "tags": video_tags if video_tags else [],
+                                "views": int(views) if isinstance(views, (int, str)) else 0,
+                                "engagement_rate": (like_count + comment_count) / max(1, view_count) * 100 if isinstance(view_count, (int)) and view_count > 0 else 0
+                            }
+                            # Update historical performance data
+                            video_selector.update_historical_performance(video_data)
+                            print_info("Updated historical performance data for Smart Video Selection")
+                        except (ImportError, Exception) as e:
+                            print_warning(f"Could not update historical performance data: {str(e)}")
 
                         video_counter += 1; total_downloaded_this_run += 1; channel_download_counts[channel_url] += 1
                         print(f"  Processed video {video_counter-1} successfully.") # Confirmation log
@@ -2897,8 +3026,12 @@ def find_related_channels(top_channels: List[str], channel_listing_cache: Dict, 
 # --- End Related Channels Discovery ---
 
 # --- Enhanced Metadata Generation ---
-def generate_metadata_with_timeout_v2(video_title, uploader_name, original_title="Unknown Title", timeout=METADATA_TIMEOUT_SECONDS):
+def generate_metadata_with_timeout_v2(video_title, uploader_name, original_title="Unknown Title", timeout=None):
     """Generates metadata with timeout, includes category suggestion."""
+    # Use global METADATA_TIMEOUT_SECONDS if timeout not specified
+    if timeout is None:
+        global METADATA_TIMEOUT_SECONDS
+        timeout = METADATA_TIMEOUT_SECONDS
     metadata_metrics = load_metadata_metrics()
     metadata_metrics["total_api_calls"] += 1
     error_type = None

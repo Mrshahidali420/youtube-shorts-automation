@@ -1,4 +1,17 @@
-# --- Combined downloader.py ---
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Keyword-Based Downloader for YouTube Shorts Automation
+
+This module provides functionality to download trending short-form videos
+based on keywords, with SEO optimization and self-improvement capabilities.
+
+Copyright (c) 2023-2025 Shahid Ali
+License: MIT License
+GitHub: https://github.com/Mrshahidali420/youtube-shorts-automation
+Version: 1.5.0
+"""
+
 import os
 import json
 import yt_dlp
@@ -39,8 +52,8 @@ NEW_KEYWORDS_TO_GENERATE = 10    # Number of new keywords to generate when neede
 # Constants that don't change with config
 MAX_TITLE_LENGTH = 100             # YouTube's recommended max title length
 TARGET_TITLE_LENGTH = 90           # Target length before adding #Shorts (SEO focus prefers slightly longer)
-METADATA_TIMEOUT_SECONDS = 15      # Timeout for Gemini API call
 INITIAL_KEYWORDS_COUNT = 15        # Number of keywords to generate initially
+# METADATA_TIMEOUT_SECONDS is now loaded from config.txt
 EXCEL_FILENAME = "shorts_data.xlsx"
 DOWNLOADED_SHEET_NAME = "Downloaded"
 UPLOADED_SHEET_NAME = "Uploaded"
@@ -859,8 +872,12 @@ def generate_seo_metadata(video_topic, uploader_name="Unknown Uploader", origina
 
 
 # MODIFIED FOR COMBINED SCRIPT - Uses SEO Style Fallback & Tracks SEO Errors
-def generate_metadata_with_timeout(video_title, uploader_name, original_title="Unknown Title", timeout=METADATA_TIMEOUT_SECONDS):
+def generate_metadata_with_timeout(video_title, uploader_name, original_title="Unknown Title", timeout=None):
     """Generates metadata with a timeout (SEO Style Fallback) and suggests category."""
+    # Use global METADATA_TIMEOUT_SECONDS if timeout not specified
+    if timeout is None:
+        global METADATA_TIMEOUT_SECONDS
+        timeout = METADATA_TIMEOUT_SECONDS
     metadata_metrics = load_metadata_metrics()
     metadata_metrics["total_api_calls"] += 1 # Count main metadata call
     error_type = None
@@ -1056,7 +1073,7 @@ def improve_metadata_prompt(error_metrics):
     """
 
     try:
-        model = genai.GenerativeModel("gemini-1.5-flash") # Using flash
+        model = genai.GenerativeModel("gemini-2.0-flash") # Using 2.0 flash
         response = model.generate_content(meta_prompt)
         improved_prompt = response.text.strip()
 
@@ -1564,9 +1581,16 @@ if __name__ == "__main__":
         except (ValueError, TypeError): print_warning(f"Invalid NEW_KEYWORDS_TO_GENERATE. Using default: {NEW_KEYWORDS_TO_GENERATE}")
         if NEW_KEYWORDS_TO_GENERATE <= 0: NEW_KEYWORDS_TO_GENERATE = 10; print_warning(f"NEW_KEYWORDS_TO_GENERATE must be positive. Using default: 10")
 
+        # METADATA_TIMEOUT_SECONDS (Optional with Default)
+        METADATA_TIMEOUT_SECONDS = 15  # Default value
+        try: METADATA_TIMEOUT_SECONDS = int(config.get("METADATA_TIMEOUT_SECONDS", METADATA_TIMEOUT_SECONDS))
+        except (ValueError, TypeError): print_warning(f"Invalid METADATA_TIMEOUT_SECONDS. Using default: {METADATA_TIMEOUT_SECONDS}")
+        if METADATA_TIMEOUT_SECONDS <= 0: METADATA_TIMEOUT_SECONDS = 15; print_warning(f"METADATA_TIMEOUT_SECONDS must be positive. Using default: 15")
+
         print(f"{Fore.BLUE}{Style.BRIGHT}Settings: Max Downloads={max_downloads}, Max Keywords={max_keywords}{Style.RESET_ALL}")
         print(f"{Fore.BLUE}Keyword Settings: Search Results={YT_SEARCH_RESULTS_PER_KEYWORD}, Keywords Per Run={KEYWORDS_TO_PROCESS_PER_RUN}, Videos Per Keyword={VIDEOS_TO_DOWNLOAD_PER_KEYWORD}{Style.RESET_ALL}")
         print(f"{Fore.BLUE}Keyword Generation: Min Threshold={MIN_KEYWORDS_THRESHOLD}, New Keywords={NEW_KEYWORDS_TO_GENERATE}{Style.RESET_ALL}")
+        print(f"{Fore.BLUE}Metadata Settings: Timeout={METADATA_TIMEOUT_SECONDS}s{Style.RESET_ALL}")
 
         # --- Load or Create Excel Workbook ---
         excel_loaded_ok = False
