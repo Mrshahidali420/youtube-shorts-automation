@@ -50,6 +50,7 @@ logs/tuning_suggestions.log
 data/*.xlsx
 
 # Log files
+*.log
 logs/*.log
 logs/*_log.txt
 logs/*error_log.txt
