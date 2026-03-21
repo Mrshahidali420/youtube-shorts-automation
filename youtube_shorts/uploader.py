@@ -497,7 +497,8 @@ def fetch_channel_playlists(service: Any) -> Dict[str, str]:
                 playlist_id = item.get("id"); playlist_title = item.get("snippet", {}).get("title")
                 if playlist_id and playlist_title: playlists_map[playlist_id] = playlist_title
             next_page_token = response.get("nextPageToken")
-            if not next_page_token: break; time.sleep(0.5)
+            time.sleep(0.5)
+            if not next_page_token: break
         print_success(f"Fetched {len(playlists_map)} existing playlists.")
         return playlists_map
     except HttpError as e: print_error(f"API Error fetching playlists: {e}", include_traceback=True); log_error_to_file(f"API Error fetching playlists: {e}", include_traceback=True); return playlists_map
@@ -694,8 +695,8 @@ def configure_driver() -> Optional[webdriver.Firefox]:
         profile_path = profile_path_config.strip()
         if os.path.isdir(profile_path):
             try: firefox_options.profile = profile_path; print_info(f"Using Firefox profile: {profile_path}", 1)
-            except Exception as e: print_warning(f"Error setting profile '{profile_path}'. Default used. Error: {e}", 1); log_error_to_file(f"Warning: {msg}")
-        else: print_warning(f"PROFILE_PATH '{profile_path}' not found. Default used.", 1); log_error_to_file(f"Warning: {msg}")
+            except Exception as e: print_warning(f"Error setting profile '{profile_path}'. Default used. Error: {e}", 1); log_error_to_file(f"Warning: Failed to set Firefox profile path: {e}")
+        else: print_warning(f"PROFILE_PATH '{profile_path}' not found. Default used.", 1); log_error_to_file(f"Warning: Firefox profile path not found: {profile_path}")
     else: print_info("Using default Firefox profile (PROFILE_PATH not set).", 1)
 
     driver = None
@@ -1388,7 +1389,7 @@ def main():
 
         # --- YouTube Analytics & Playlist API ---
         service = None; peak_hours_from_analytics = []; playlist_cache = load_playlist_cache()
-        if enable_analytics_scheduling or any(metadata.get("target_playlist") for metadata in [...] ): # Need to check actual metadata later
+        if enable_analytics_scheduling:
             print_section_header("Fetching/Loading API Data (Analytics/Playlists)")
             cached_data = load_peak_times_cache(); cache_is_fresh = False
             if cached_data:
