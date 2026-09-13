@@ -51,6 +51,7 @@ data/*.xlsx
 
 # Log files
 logs/*.log
+*.log
 logs/*_log.txt
 logs/*error_log.txt
 logs/uploader_analysis_log.txt

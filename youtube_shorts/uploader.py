@@ -112,7 +112,7 @@ try:
          )
          EXCEL_UTILS_AVAILABLE = True
     elif os.path.exists(excel_utils_path_root):
-         import excel_utils
+         from . import excel_utils
          # Define a fallback function for load_workbook_safely if it doesn't exist
          if hasattr(excel_utils, 'load_workbook_safely'):
              load_workbook_safely = excel_utils.load_workbook_safely
@@ -181,7 +181,7 @@ try:
             DEFAULT_YOUTUBE_TITLE_LIMIT # Add title limit constant
         )
     elif os.path.exists(limits_path_root):
-        import youtube_limits
+        from . import youtube_limits
         validate_description = youtube_limits.validate_description
         validate_tags = youtube_limits.validate_tags
         validate_title = youtube_limits.validate_title # Add validate_title
@@ -602,6 +602,7 @@ def get_authenticated_service() -> Optional[Any]:
 
 # --- Configuration Loading (Moved earlier for global use) ---
 config = {}
+CONFIG_LOADED = False
 try:
     print_info(f"Loading configuration from: {CONFIG_FILE_PATH}")
     with open(CONFIG_FILE_PATH, "r", encoding="utf-8") as f:
@@ -610,9 +611,15 @@ try:
             if line and not line.startswith('#') and "=" in line:
                 key, value = line.split("=", 1)
                 config[key.strip()] = value.strip()
+    CONFIG_LOADED = True
     print_success("Configuration loaded.")
-except FileNotFoundError: print_fatal(f"Configuration file '{CONFIG_FILE_PATH}' not found. Cannot continue.", log_to_file=False); raise
-except Exception as e: print_fatal(f"Error reading configuration file '{CONFIG_FILE_PATH}': {e}. Cannot continue.", log_to_file=False); raise
+except FileNotFoundError:
+    # Importing this module must still work without a config file, so the run
+    # is stopped in main() instead of here. Copy config/config.example.txt to
+    # config/config.txt to create one.
+    print_warning(f"Configuration file '{CONFIG_FILE_PATH}' not found. Copy config/config.example.txt to config/config.txt before running.")
+except Exception as e:
+    print_warning(f"Error reading configuration file '{CONFIG_FILE_PATH}': {e}. Copy config/config.example.txt to config/config.txt before running.")
 # --- End Configuration Loading ---
 
 # --- Get Configurable Settings (Moved earlier for global use) ---
@@ -1290,6 +1297,10 @@ def analyze_upload_errors_with_gemini():
 # --- Main Execution Logic ---
 def main():
     """Main function to drive the uploader script."""
+
+    if not CONFIG_LOADED:
+        print_fatal(f"Configuration file '{CONFIG_FILE_PATH}' not found or unreadable. Copy config/config.example.txt to config/config.txt and fill it in.", log_to_file=False)
+        sys.exit(1)
 
     # --- Argument Parsing ---
     analyze_mode = False; publish_mode_override = None; max_uploads_override = None
