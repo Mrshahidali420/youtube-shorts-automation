@@ -5,10 +5,10 @@ queries:
   - uses: security-extended
 
 paths:
+  # Every module lives in the package now. downloader.py, uploader.py and
+  # performance_tracker.py are no longer at the root, and naming a missing
+  # path here stops the scan before it starts.
   - youtube_shorts
-  - downloader.py
-  - uploader.py
-  - performance_tracker.py
 
 paths-ignore:
   - '**/test/**'
