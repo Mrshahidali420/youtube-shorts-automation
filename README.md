@@ -240,7 +240,7 @@ The system uses an Excel file (`shorts_data.xlsx`) with four sheets:
 
 ## Requirements
 
-- Python 3.8+
+- Python 3.10+
 - Required packages: `yt_dlp`, `google-generativeai`, `openpyxl`, `colorama`, `selenium`, `psutil`
 - Firefox browser (for uploader)
 - Google Gemini API key (for all AI features)
