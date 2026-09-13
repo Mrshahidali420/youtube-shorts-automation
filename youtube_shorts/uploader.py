@@ -694,8 +694,8 @@ def configure_driver() -> Optional[webdriver.Firefox]:
         profile_path = profile_path_config.strip()
         if os.path.isdir(profile_path):
             try: firefox_options.profile = profile_path; print_info(f"Using Firefox profile: {profile_path}", 1)
-            except Exception as e: print_warning(f"Error setting profile '{profile_path}'. Default used. Error: {e}", 1); log_error_to_file(f"Warning: {msg}")
-        else: print_warning(f"PROFILE_PATH '{profile_path}' not found. Default used.", 1); log_error_to_file(f"Warning: {msg}")
+            except Exception as e: print_warning(f"Error setting profile '{profile_path}'. Default used. Error: {e}", 1); log_error_to_file(f"Warning: Failed to set Firefox profile path '{profile_path}': {e}")
+        else: print_warning(f"PROFILE_PATH '{profile_path}' not found. Default used.", 1); log_error_to_file(f"Warning: Firefox profile path not found: {profile_path}")
     else: print_info("Using default Firefox profile (PROFILE_PATH not set).", 1)
 
     driver = None
@@ -1290,7 +1290,6 @@ def analyze_upload_errors_with_gemini():
 # --- Main Execution Logic ---
 def main():
     """Main function to drive the uploader script."""
-    global _current_recording_process, _current_recording_filename
 
     # --- Argument Parsing ---
     analyze_mode = False; publish_mode_override = None; max_uploads_override = None
