@@ -786,6 +786,132 @@ def archive_old_excel_entries(wb: Any, sheet_name: str, date_col_name: str, days
         return False
 
 
+# --- Compatibility Wrappers ---
+# uploader.py and performance_tracker.py import the names below. They are thin
+# wrappers over the functions defined above, so both naming styles keep working.
+
+def load_workbook_safely(file_path: str, read_only: bool = False, data_only: bool = False) -> Optional[Any]:
+    """
+    Load a workbook and return it, or None if it could not be loaded.
+
+    Args:
+        file_path: Path to the Excel file
+        read_only: Open the file in read-only mode
+        data_only: Read cached values instead of formulas
+
+    Returns:
+        The workbook object, or None on failure
+    """
+    wb, error = safe_load_workbook(file_path, read_only=read_only, data_only=data_only)
+    if error:
+        log_error(f"Could not load workbook '{file_path}': {error}")
+        return None
+    return wb
+
+
+def save_workbook_safely(wb: Any, file_path: str) -> bool:
+    """
+    Save a workbook.
+
+    Args:
+        wb: The workbook object
+        file_path: Path to save to
+
+    Returns:
+        bool: True if the file was saved
+    """
+    return safe_save_workbook(wb, file_path)
+
+
+def find_column_indices(sheet: Any, column_names: Dict[str, Any],
+                        case_sensitive: bool = False) -> Dict[str, Optional[int]]:
+    """
+    Find several columns at once by their header text.
+
+    Args:
+        sheet: The worksheet to search
+        column_names: Map of key to one header name or a list of accepted names
+        case_sensitive: Match the header text exactly
+
+    Returns:
+        dict: Map of the same keys to a 1-based column index, or None if not found
+    """
+    indices: Dict[str, Optional[int]] = {}
+    for key, names in column_names.items():
+        if isinstance(names, str):
+            names = [names]
+        found = None
+        for name in names:
+            found = find_column_index(sheet, name, case_sensitive=case_sensitive)
+            if found is not None:
+                break
+        indices[key] = found
+    return indices
+
+
+def get_cell_value(sheet: Any, row_idx: int, col_idx: Optional[int]) -> Any:
+    """
+    Read one cell.
+
+    Args:
+        sheet: The worksheet
+        row_idx: 1-based row index
+        col_idx: 1-based column index
+
+    Returns:
+        The cell value, or None if the cell could not be read
+    """
+    if not row_idx or not col_idx:
+        return None
+    try:
+        return sheet.cell(row=row_idx, column=col_idx).value
+    except Exception as e:
+        log_error(f"Could not read cell (row {row_idx}, column {col_idx}): {e}")
+        return None
+
+
+def parse_date_value(value: Any) -> Optional[datetime]:
+    """
+    Turn an Excel cell value into a datetime.
+
+    Accepts a datetime, an Excel serial number, or a date string.
+
+    Args:
+        value: The cell value
+
+    Returns:
+        datetime: The parsed date, or None if it could not be parsed
+    """
+    if value is None:
+        return None
+
+    if isinstance(value, datetime):
+        return value
+
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        try:
+            return datetime.fromtimestamp(time.mktime(time.gmtime((float(value) - 25569) * 86400.0)))
+        except Exception as e:
+            log_warning(f"Could not read '{value}' as an Excel date number: {e}")
+            return None
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    for date_format in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d",
+                        "%d/%m/%Y %H:%M:%S", "%d/%m/%Y %H:%M", "%d/%m/%Y",
+                        "%m/%d/%Y %H:%M:%S", "%m/%d/%Y"):
+        try:
+            return datetime.strptime(text, date_format)
+        except ValueError:
+            continue
+
+    log_warning(f"Could not read '{text}' as a date.")
+    return None
+
+
+
 # --- Main Function for Testing (Ensure test_file uses constants.DATA_DIR) ---
 def test_excel_utils():
     """Test the Excel utilities module."""

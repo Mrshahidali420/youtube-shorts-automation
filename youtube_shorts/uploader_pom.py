@@ -92,7 +92,7 @@ try:
     )
 except ImportError:
     try:
-        import youtube_limits # Fallback if in PYTHONPATH directly
+        from . import youtube_limits # Fallback when it sits next to this file
         validate_description = youtube_limits.validate_description
         validate_tags = youtube_limits.validate_tags
         DEFAULT_YOUTUBE_DESCRIPTION_LIMIT = youtube_limits.DEFAULT_YOUTUBE_DESCRIPTION_LIMIT
